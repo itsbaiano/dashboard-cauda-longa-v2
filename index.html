@@ -625,7 +625,7 @@
   .imp-section-label::after{content:''; flex:1; height:1px; background:var(--line);}
   .upload-grid{display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:8px;}
   @media (max-width:520px){ .upload-grid{grid-template-columns:1fr;} }
-  .upload-card{position:relative; border:1.5px solid var(--line); border-radius:14px; padding:14px 15px 13px; background:var(--card); transition:border-color .15s ease, box-shadow .15s ease, transform .15s ease;}
+  .upload-card{position:relative; min-width:0; border:1.5px solid var(--line); border-radius:14px; padding:14px 15px 13px; background:var(--card); transition:border-color .15s ease, box-shadow .15s ease, transform .15s ease;}
   .upload-card:hover{border-color:var(--primary-light); box-shadow:0 4px 14px rgba(16,30,99,.08); transform:translateY(-1px);}
   .upload-card:has(.file-field.has-file){border-color:var(--accent-mint); background:rgba(22,184,122,.05);}
   .upload-card-top{display:flex; align-items:center; gap:9px; margin-bottom:6px;}
@@ -635,8 +635,8 @@
   .upload-card:has(.file-field.has-file) .upload-card-icon i{color:var(--accent-mint);}
   .upload-card-title{font-size:12.5px; font-weight:800; color:var(--navy); line-height:1.25;}
   .upload-card-hint{font-size:10.5px; color:var(--muted); line-height:1.45; margin:0 0 10px;}
-  .upload-card .file-field{margin-top:2px;}
-  .upload-card input[type=file]{font-size:11.5px; color:var(--muted);}
+  .upload-card .file-field{margin-top:2px; flex-wrap:wrap;}
+  .upload-card input[type=file]{font-size:11.5px; color:var(--muted); max-width:100%;}
   input[type=file]::file-selector-button{
     padding:7px 13px; border-radius:8px; border:1px solid var(--line); background:var(--bg);
     color:var(--navy); font-size:11px; font-weight:700; cursor:pointer; margin-right:9px;
@@ -1228,7 +1228,7 @@
   <button id="btnOpenImport" style="position:fixed; bottom:20px; right:20px; z-index:50; padding:13px 20px; border-radius:50px; border:none; background:var(--navy); color:#fff; font-weight:700; font-size:13px; cursor:pointer; box-shadow:0 4px 14px rgba(15,23,42,.25);"><i class=ic-refresh></i> Atualizar Dados</button>
 
   <div id="importModalOverlay" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:100; align-items:center; justify-content:center; padding:20px;">
-    <div id="importModal" style="background:#fff; border-radius:16px; padding:28px; max-width:600px; width:100%; max-height:85vh; overflow-y:auto;">
+    <div id="importModal" style="background:#fff; border-radius:16px; padding:28px; max-width:600px; width:100%; max-height:85vh; overflow-y:auto; overflow-x:hidden; box-sizing:border-box;">
       <div class="imp-head">
         <div class="imp-head-icon"><i class=ic-refresh></i></div>
         <div>
