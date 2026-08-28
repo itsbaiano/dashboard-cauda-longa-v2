@@ -1710,7 +1710,7 @@
 
 
       <div class="panel" id="execSearchResultsPanel" style="display:none;">
-        <h2>Resultado da busca</h2>
+        <h2 id="execSearchResultsTitle">Resultado da busca</h2>
         <div class="panel-sub">Gráficos de % não fazem sentido pra poucas corretoras — aqui vai a informação direta de cada uma encontrada.</div>
         <div id="execSearchResultsCards" style="display:flex; flex-direction:column; gap:10px;"></div>
       </div>
@@ -4193,14 +4193,32 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     // sem contexto isso parece "não achei nada". Deixa isso explícito antes dos cards.
     const searchQ = document.getElementById('fSearch').value.trim();
     const searchBanner = document.getElementById('execSearchBanner');
-    // Qualquer filtro que restrinja a uma fatia específica (busca por nome/código OU um dos
-    // cards de KPI) faz os gráficos de % pararem de fazer sentido: com poucas corretoras eles
-    // ficam vazios, e com uma categoria inteira já pré-selecionada (ex.: "Não Elegíveis") o
-    // resultado vira meio óbvio/redundante. Troca por algo direto: cards por corretora quando
-    // sobra pouca gente, ou um resumo por gestor quando a fatia ainda é grande.
-    const isNarrowed = !!(searchQ || activeKpiFilter);
+    // Qualquer filtro que restrinja a uma fatia específica (busca por nome/código, um dos
+    // cards de KPI, OU os dropdowns de Elegibilidade/Ranking) faz os gráficos de % pararem
+    // de fazer sentido: com poucas corretoras eles ficam vazios, e com uma categoria inteira
+    // já pré-selecionada (ex.: "Não Elegíveis") o resultado vira meio óbvio/redundante —
+    // "Elegibilidade por Gestor" mostra 0% pra todo mundo, o funil zera a última etapa, etc.
+    // Achado em 2026-08-28 (Victor: "os mesmos gráficos zerados, sem sentido"): os dropdowns
+    // de Elegibilidade e Ranking causavam exatamente esse mesmo problema que já tinha sido
+    // resolvido pra busca/clique-no-card — só não incluíam esses dois filtros na checagem.
+    // Troca por algo direto: cards por corretora quando sobra pouca gente, ou um resumo por
+    // gestor quando a fatia ainda é grande (mesmo comportamento já validado pros outros casos).
+    const elFilterActive = document.getElementById('fEleg').value !== '';
+    const rkFilterActive = selRank.value !== '';
+    const isNarrowed = !!(searchQ || activeKpiFilter || elFilterActive || rkFilterActive);
     const smallSlice = isNarrowed && n > 0 && n <= 8;
     const bigSlice = isNarrowed && n > 8;
+    // Rótulo do filtro ativo, pra título das duas views "fatia estreita" (smallSlice/bigSlice)
+    // — cobre os 4 jeitos de chegar numa fatia restrita: card de KPI, busca por texto, e
+    // agora também os dropdowns de Elegibilidade e Ranking (ver comentário do isNarrowed acima).
+    // Precisa vir ANTES do bloco "if (smallSlice)" logo abaixo, que já usa essa variável —
+    // declará-la só lá embaixo (perto do "if (bigSlice)") quebrava render() inteiro com
+    // ReferenceError sempre que smallSlice desse true, silenciosamente (achado testando).
+    const narrowedLabel = searchQ ? `"${searchQ}"`
+      : activeKpiFilter ? ({ eleg:'Elegíveis', quase:'Quase Elegíveis (76–99%)', risco:'Em Risco', distantes:'Não Elegíveis (distantes)' }[activeKpiFilter] || activeKpiFilter)
+      : elFilterActive ? (document.getElementById('fEleg').selectedOptions[0].text)
+      : rkFilterActive ? ('Ranking: ' + selRank.value)
+      : 'filtro ativo';
     if (searchQ) {
       searchBanner.style.display = '';
       searchBanner.innerHTML = n
@@ -4235,6 +4253,7 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     document.getElementById('baseCorretorasPanel').style.display = smallSlice ? 'none' : '';
 
     if (smallSlice){
+      document.getElementById('execSearchResultsTitle').textContent = searchQ ? 'Resultado da busca' : `Resultado do filtro — ${narrowedLabel}`;
       // Se o painel de detalhe estava "morando" dentro de um card (efeito acordeão) e a
       // lista de resultados vai ser reconstruída agora (buscou de novo, mudou filtro...),
       // resgata ele pro lugar de origem ANTES de sobrescrever o innerHTML — senão o
@@ -4277,8 +4296,7 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     }
 
     if (bigSlice){
-      const activeLabel = { eleg:'Elegíveis', quase:'Quase Elegíveis (76–99%)', risco:'Em Risco', distantes:'Não Elegíveis (distantes)' }[activeKpiFilter] || 'busca';
-      document.getElementById('execFilterSummaryTitle').textContent = `Resumo da fatia filtrada — ${searchQ ? `"${searchQ}"` : activeLabel}`;
+      document.getElementById('execFilterSummaryTitle').textContent = `Resumo da fatia filtrada — ${narrowedLabel}`;
       const byGestorSlice = {};
       rows.forEach(r => { (byGestorSlice[r.d.g] = byGestorSlice[r.d.g] || []).push(r); });
       const gestorNamesSlice = Object.keys(byGestorSlice).sort((a,b)=>byGestorSlice[b].length-byGestorSlice[a].length);
