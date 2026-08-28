@@ -616,6 +616,64 @@
   .file-clear:hover{background:rgba(245,54,74,.10); color:var(--accent-red); border-color:rgba(245,54,74,.3);}
   .file-field.has-file .file-clear{visibility:visible;}
 
+  /* ===== MODAL "ATUALIZAR DADOS" — redesign 2026-08-28 (pedido do Victor: mais
+     moderno/profissional, refletindo o fluxo diário real de 4 planilhas) ===== */
+  .imp-head{display:flex; align-items:flex-start; gap:12px; margin-bottom:18px;}
+  .imp-head-icon{flex-shrink:0; width:42px; height:42px; border-radius:12px; background:linear-gradient(135deg, var(--navy), var(--blue)); display:flex; align-items:center; justify-content:center; box-shadow:0 4px 12px rgba(16,30,99,.22);}
+  .imp-head-icon i{color:#fff; font-size:18px;}
+  .imp-section-label{font-size:11px; font-weight:800; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; margin:0 0 12px; display:flex; align-items:center; gap:8px;}
+  .imp-section-label::after{content:''; flex:1; height:1px; background:var(--line);}
+  .upload-grid{display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:8px;}
+  @media (max-width:520px){ .upload-grid{grid-template-columns:1fr;} }
+  .upload-card{position:relative; border:1.5px solid var(--line); border-radius:14px; padding:14px 15px 13px; background:var(--card); transition:border-color .15s ease, box-shadow .15s ease, transform .15s ease;}
+  .upload-card:hover{border-color:var(--primary-light); box-shadow:0 4px 14px rgba(16,30,99,.08); transform:translateY(-1px);}
+  .upload-card:has(.file-field.has-file){border-color:var(--accent-mint); background:rgba(22,184,122,.05);}
+  .upload-card-top{display:flex; align-items:center; gap:9px; margin-bottom:6px;}
+  .upload-card-icon{flex-shrink:0; width:28px; height:28px; border-radius:9px; background:rgba(46,82,212,.1); display:flex; align-items:center; justify-content:center;}
+  .upload-card-icon i{font-size:13px; color:var(--blue);}
+  .upload-card:has(.file-field.has-file) .upload-card-icon{background:rgba(22,184,122,.16);}
+  .upload-card:has(.file-field.has-file) .upload-card-icon i{color:var(--accent-mint);}
+  .upload-card-title{font-size:12.5px; font-weight:800; color:var(--navy); line-height:1.25;}
+  .upload-card-hint{font-size:10.5px; color:var(--muted); line-height:1.45; margin:0 0 10px;}
+  .upload-card .file-field{margin-top:2px;}
+  .upload-card input[type=file]{font-size:11.5px; color:var(--muted);}
+  input[type=file]::file-selector-button{
+    padding:7px 13px; border-radius:8px; border:1px solid var(--line); background:var(--bg);
+    color:var(--navy); font-size:11px; font-weight:700; cursor:pointer; margin-right:9px;
+    transition:background .15s ease, border-color .15s ease;
+  }
+  input[type=file]::file-selector-button:hover{background:rgba(46,82,212,.08); border-color:var(--primary-light);}
+  .upload-card-check{position:absolute; top:10px; right:10px; width:18px; height:18px; border-radius:50%; background:var(--accent-mint); display:none; align-items:center; justify-content:center; color:#fff; font-size:10px;}
+  .upload-card:has(.file-field.has-file) .upload-card-check{display:flex;}
+  .imp-advanced-list .f-group{border-bottom:1px solid var(--line); padding-bottom:10px; margin-bottom:10px !important;}
+  .imp-advanced-list .f-group:last-child{border-bottom:none;}
+  .imp-advanced-list label{font-size:11.5px; font-weight:700; color:var(--text);}
+  details.imp-advanced{margin-bottom:18px; border:1px solid var(--line); border-radius:12px; padding:4px 14px; background:var(--bg); transition:.15s;}
+  details.imp-advanced[open]{padding-bottom:12px;}
+  details.imp-advanced summary{cursor:pointer; font-size:12px; font-weight:700; color:var(--blue); padding:10px 0; list-style:none; display:flex; align-items:center; gap:7px;}
+  details.imp-advanced summary::-webkit-details-marker{display:none;}
+  details.imp-advanced summary::before{content:'▸'; font-size:10px; transition:transform .15s ease;}
+  details.imp-advanced[open] summary::before{transform:rotate(90deg);}
+  .btn-modern{
+    display:flex; align-items:center; justify-content:center; gap:8px; width:100%;
+    padding:12px 18px; border-radius:11px; border:none; font-size:13px; font-weight:800;
+    cursor:pointer; transition:transform .12s ease, box-shadow .12s ease, opacity .12s ease;
+    letter-spacing:.1px;
+  }
+  .btn-modern:active{transform:scale(.98);}
+  .btn-modern-primary{background:linear-gradient(120deg, var(--navy), var(--primary-mid)); color:#fff; box-shadow:0 4px 14px rgba(16,30,99,.25);}
+  .btn-modern-primary:hover{box-shadow:0 6px 18px rgba(16,30,99,.32); transform:translateY(-1px);}
+  .btn-modern-success{background:linear-gradient(120deg, var(--accent-mint), #12a06a); color:#fff; box-shadow:0 4px 14px rgba(22,184,122,.28);}
+  .btn-modern-success:hover{box-shadow:0 6px 18px rgba(22,184,122,.35); transform:translateY(-1px);}
+  .btn-modern-ghost{background:transparent; color:var(--muted); border:1.5px solid var(--line);}
+  .btn-modern-ghost:hover{background:var(--bg); color:var(--text); border-color:var(--muted);}
+  .btn-modern-text{width:auto; padding:9px 4px; background:transparent; color:var(--muted); font-weight:700; box-shadow:none;}
+  .btn-modern-text:hover{color:var(--text);}
+  [data-theme="dark"] input[type=file]::file-selector-button{background:var(--card); color:var(--text);}
+  [data-theme="dark"] .upload-card{background:rgba(255,255,255,.02);}
+  [data-theme="dark"] .upload-card:has(.file-field.has-file){background:rgba(22,184,122,.08);}
+  [data-theme="dark"] details.imp-advanced{background:rgba(255,255,255,.02);}
+
   /* ===== ABA COMPARATIVO — Confronto Head-to-Head ===== */
   .vs-hero{display:grid; grid-template-columns:1fr 58px 1fr; align-items:stretch; background:var(--card); border:1px solid var(--line); border-radius:18px; overflow:hidden; box-shadow:0 1px 3px rgba(16,30,99,.05); margin-bottom:16px;}
   .vs-side{padding:24px 26px; position:relative; animation:fadeInUp .3s ease-out both;}
@@ -1171,61 +1229,87 @@
 
   <div id="importModalOverlay" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:100; align-items:center; justify-content:center; padding:20px;">
     <div id="importModal" style="background:#fff; border-radius:16px; padding:28px; max-width:600px; width:100%; max-height:85vh; overflow-y:auto;">
-      <h2 style="font-size:16px; color:var(--navy); margin-bottom:4px;">Atualizar Dados</h2>
-      <p style="font-size:12.5px; color:var(--muted); margin-bottom:16px;">Envie as planilhas atualizadas. Você verá um resumo das mudanças antes de confirmar.</p>
-      <div class="f-group" style="margin-bottom:6px;">
-        <label>Desempenho Comercial e Elegibilidade</label>
-        <div class="file-field"><input type="file" id="fileMetaJunho" accept=".xlsx" style="font-size:12.5px;"><button type="button" class="file-clear" data-target="fileMetaJunho" title="Remover arquivo">✕ remover</button></div>
+      <div class="imp-head">
+        <div class="imp-head-icon"><i class=ic-refresh></i></div>
+        <div>
+          <h2 style="font-size:16.5px; color:var(--navy); margin-bottom:2px;">Atualizar Dados</h2>
+          <p style="font-size:12px; color:var(--muted);">Envie as planilhas atualizadas. Você verá um resumo das mudanças antes de confirmar.</p>
+        </div>
       </div>
-      <div style="font-size:11.5px; color:var(--muted); margin-bottom:16px; line-height:1.5;"><i class=ic-bulb></i> Use seu relatório "NDI SP - Por Gestor" do mês atual — atualiza <b>Desempenho Comercial, Elegibilidade e o Ranking de Vendas</b> de uma vez, sem precisar de mais nada. Pode arrastar qualquer planilha em qualquer campo: o sistema identifica o conteúdo sozinho.</div>
-      <details style="margin-bottom:16px; border:1px solid var(--line); border-radius:8px; padding:10px 14px;">
-        <summary style="cursor:pointer; font-size:12.5px; font-weight:700; color:var(--blue);">Opções avançadas (uso ocasional)</summary>
-        <div style="margin-top:14px;">
-          <div class="f-group" style="margin-bottom:4px;">
-            <label>Elegibilidade completa — só arquivo mestre da Hapvida</label>
-            <div class="file-field"><input type="file" id="fileElegibilidade" accept=".xlsx" style="font-size:12.5px;"><button type="button" class="file-clear" data-target="fileElegibilidade" title="Remover arquivo">✕ remover</button></div>
+
+      <p class="imp-section-label">Rotina diária</p>
+      <div class="upload-grid">
+        <div class="upload-card">
+          <div class="upload-card-check"><i class=ic-check></i></div>
+          <div class="upload-card-top">
+            <div class="upload-card-icon"><i class=ic-chart></i></div>
+            <div class="upload-card-title">Extrato do BI (Corretoras)</div>
           </div>
-          <div style="font-size:11px; color:var(--muted); margin-bottom:12px;">Ranking e histórico completo (18+ meses). Não precisa pro dia a dia.</div>
-          <div class="f-group" style="margin-bottom:12px;">
-            <label>Carteira / Gestores</label>
-            <div class="file-field"><input type="file" id="fileCarteira" accept=".xlsx" style="font-size:12.5px;"><button type="button" class="file-clear" data-target="fileCarteira" title="Remover arquivo">✕ remover</button></div>
+          <p class="upload-card-hint">Atualiza Desempenho Comercial, Elegibilidade e Ranking de Vendas de uma vez. O sistema identifica o conteúdo sozinho.</p>
+          <div class="file-field"><input type="file" id="fileMetaJunho" accept=".xlsx"><button type="button" class="file-clear" data-target="fileMetaJunho" title="Remover arquivo">✕</button></div>
+        </div>
+        <div class="upload-card">
+          <div class="upload-card-check"><i class=ic-check></i></div>
+          <div class="upload-card-top">
+            <div class="upload-card-icon"><i class=ic-doc></i></div>
+            <div class="upload-card-title">Funil PME</div>
           </div>
-          <div class="f-group" style="margin-bottom:12px;">
-            <label>Pendências PME/SS</label>
-            <div class="file-field"><input type="file" id="filePendPme" accept=".xlsx" style="font-size:12.5px;"><button type="button" class="file-clear" data-target="filePendPme" title="Remover arquivo">✕ remover</button></div>
+          <p class="upload-card-hint">Pendências detalhadas por status + SLA (aba Conversão).</p>
+          <div class="file-field"><input type="file" id="filePendPme" accept=".xlsx"><button type="button" class="file-clear" data-target="filePendPme" title="Remover arquivo">✕</button></div>
+        </div>
+        <div class="upload-card">
+          <div class="upload-card-check"><i class=ic-check></i></div>
+          <div class="upload-card-top">
+            <div class="upload-card-icon"><i class=ic-cart></i></div>
+            <div class="upload-card-title">Funil PF</div>
           </div>
-          <div class="f-group" style="margin-bottom:4px;">
-            <label>Pendências PF / Orçamentos</label>
-            <div class="file-field"><input type="file" id="filePendPf" accept=".xlsx" style="font-size:12.5px;"><button type="button" class="file-clear" data-target="filePendPf" title="Remover arquivo">✕ remover</button></div>
+          <p class="upload-card-hint">Orçamentos por status + SLA (aba Conversão).</p>
+          <div class="file-field"><input type="file" id="filePendPf" accept=".xlsx"><button type="button" class="file-clear" data-target="filePendPf" title="Remover arquivo">✕</button></div>
+        </div>
+        <div class="upload-card">
+          <div class="upload-card-check"><i class=ic-check></i></div>
+          <div class="upload-card-top">
+            <div class="upload-card-icon"><i class=ic-trend></i></div>
+            <div class="upload-card-title">Crescimento Geral</div>
           </div>
-          <div style="font-size:11px; color:var(--muted); margin-bottom:12px;"></div>
-          <div class="f-group" style="margin-bottom:4px;">
-            <label>Aguardando Assinatura (Notificadas)</label>
-            <div class="file-field"><input type="file" id="fileAssinatura" accept=".xlsx" style="font-size:12.5px;"><button type="button" class="file-clear" data-target="fileAssinatura" title="Remover arquivo">✕ remover</button></div>
+          <p class="upload-card-hint">Cartões "ontem → hoje" da aba Conversão, com os números oficiais do dia.</p>
+          <div class="file-field"><input type="file" id="fileCrescimentoGeral" accept=".xlsx"><button type="button" class="file-clear" data-target="fileCrescimentoGeral" title="Remover arquivo">✕</button></div>
+        </div>
+      </div>
+
+      <details class="imp-advanced">
+        <summary>Opções avançadas (uso ocasional)</summary>
+        <div class="imp-advanced-list" style="margin-top:6px;">
+          <div class="f-group">
+            <label><i class=ic-users></i> Carteira / Gestores</label>
+            <div class="file-field"><input type="file" id="fileCarteira" accept=".xlsx"><button type="button" class="file-clear" data-target="fileCarteira" title="Remover arquivo">✕ remover</button></div>
+            <div style="font-size:10.5px; color:var(--muted); margin-top:5px;">Só precisa reenviar quando o cadastro de código→gestor mudar (corretora nova, gestor trocado).</div>
           </div>
-          <div style="font-size:11px; color:var(--muted); margin-bottom:16px;">O relatório "stats_export_gndi" já com as colunas GESTOR e CORRETORA preenchidas (o mesmo VLOOKUP que você já faz hoje).</div>
-          <div class="f-group" style="margin-bottom:4px;">
-            <label>Crescimento Geral (ontem × hoje da Conversão)</label>
-            <div class="file-field"><input type="file" id="fileCrescimentoGeral" accept=".xlsx" style="font-size:12.5px;"><button type="button" class="file-clear" data-target="fileCrescimentoGeral" title="Remover arquivo">✕ remover</button></div>
+          <div class="f-group">
+            <label><i class=ic-award></i> Elegibilidade completa — arquivo mestre da Hapvida</label>
+            <div class="file-field"><input type="file" id="fileElegibilidade" accept=".xlsx"><button type="button" class="file-clear" data-target="fileElegibilidade" title="Remover arquivo">✕ remover</button></div>
+            <div style="font-size:10.5px; color:var(--muted); margin-top:5px;">Ranking e histórico completo (18+ meses). Não precisa pro dia a dia.</div>
           </div>
-          <div style="font-size:11px; color:var(--muted); margin-bottom:16px;">A planilha "CRESCIMENTO GERAL" do sênior (aba GERAL) — alimenta os cartões "ontem → hoje" da aba Conversão com os números oficiais do dia, em vez de comparar com a última vez que o dashboard foi atualizado.</div>
-          <div style="border-top:1px solid var(--line); padding-top:14px;">
-            <div style="font-size:12px; font-weight:800; color:var(--navy); margin-bottom:4px;">Ranking de Vendas — mês anterior</div>
-            <div style="font-size:11px; color:var(--muted); margin-bottom:12px;">O mês atual do ranking vem do arquivo principal lá em cima (o mesmo "NDI SP - Por Gestor"). Aqui você só troca o <b>mês anterior</b>, quando virar o mês.</div>
-            <div class="f-group" style="margin-bottom:4px;">
-              <label>Ranking — Mês Anterior (ex: junho)</label>
-              <div class="file-field"><input type="file" id="fileRankPrev" accept=".xlsx" style="font-size:12.5px;"><button type="button" class="file-clear" data-target="fileRankPrev" title="Remover arquivo">✕ remover</button></div>
-            </div>
+          <div class="f-group">
+            <label><i class=ic-check></i> Aguardando Assinatura (Notificadas)</label>
+            <div class="file-field"><input type="file" id="fileAssinatura" accept=".xlsx"><button type="button" class="file-clear" data-target="fileAssinatura" title="Remover arquivo">✕ remover</button></div>
+            <div style="font-size:10.5px; color:var(--muted); margin-top:5px;">O relatório "stats_export_gndi" já com as colunas GESTOR e CORRETORA preenchidas.</div>
+          </div>
+          <div class="f-group" style="margin-bottom:0 !important;">
+            <label><i class=ic-trophy></i> Ranking — Mês Anterior (ex: junho)</label>
+            <div class="file-field"><input type="file" id="fileRankPrev" accept=".xlsx"><button type="button" class="file-clear" data-target="fileRankPrev" title="Remover arquivo">✕ remover</button></div>
+            <div style="font-size:10.5px; color:var(--muted); margin-top:5px;">O mês atual do ranking já vem do Extrato do BI, lá em cima. Aqui você só troca o mês anterior, quando virar o mês.</div>
           </div>
         </div>
       </details>
-      <button id="btnProcessImport" class="btn-reset" style="background:var(--navy); color:#fff; border-color:var(--navy);">Processar Arquivos</button>
+
+      <button id="btnProcessImport" class="btn-modern btn-modern-primary"><i class=ic-refresh></i> Processar Arquivos</button>
       <div id="importStatus" style="margin-top:10px;"></div>
       <div id="importSummary" style="display:none; margin-top:14px; border-top:1px solid var(--line); padding-top:14px;">
         <div id="importSummaryBody"></div>
         <div style="display:flex; gap:10px; margin-top:16px;">
-          <button id="btnConfirmImport" class="btn-reset" style="background:var(--green); color:#fff; border-color:var(--green);">Confirmar Atualização</button>
-          <button id="btnCancelImportInner" class="btn-reset">Cancelar</button>
+          <button id="btnConfirmImport" class="btn-modern btn-modern-success"><i class=ic-check></i> Confirmar Atualização</button>
+          <button id="btnCancelImportInner" class="btn-modern btn-modern-ghost" style="width:auto; padding:12px 20px;">Cancelar</button>
         </div>
       </div>
       <div id="publishStep" style="display:none; margin-top:14px; border-top:1px solid var(--line); padding-top:14px;">
@@ -1237,9 +1321,9 @@
           <div id="ghTokenField" style="display:none; margin-bottom:12px;">
             <label style="font-size:11.5px; font-weight:700; color:var(--navy); display:block; margin-bottom:5px;">Token de acesso do GitHub (só na primeira vez neste navegador)</label>
             <input type="password" id="ghTokenInput" placeholder="ghp_..." style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:12.5px; font-family:inherit;">
-            <div style="font-size:11px; color:var(--muted); margin-top:6px; line-height:1.6;">Crie em <b>github.com → Settings → Developer settings → Fine-grained tokens</b>, com acesso restrito ao repositório <code>dashboard-cauda-longa</code> e permissão <b>Contents: Read and write</b>. Fica salvo só neste navegador — nunca é publicado no site.</div>
+            <div style="font-size:11px; color:var(--muted); margin-top:6px; line-height:1.6;">Crie em <b>github.com → Settings → Developer settings → Fine-grained tokens</b>, com acesso restrito ao repositório <code>dashboard-cauda-longa-v2</code> e permissão <b>Contents: Read and write</b>. Fica salvo só neste navegador — nunca é publicado no site.</div>
           </div>
-          <button id="btnPublishGithub" class="btn-reset" style="background:var(--navy); color:#fff; border-color:var(--navy); width:100%;"><i class=ic-refresh></i> Publicar no GitHub</button>
+          <button id="btnPublishGithub" class="btn-modern btn-modern-primary"><i class=ic-refresh></i> Publicar no GitHub</button>
           <div id="publishStatus" style="margin-top:10px; font-size:12px;"></div>
           <div style="display:flex; justify-content:space-between; margin-top:10px;">
             <span id="ghChangeToken" style="font-size:11px; color:var(--blue); cursor:pointer; display:none;">trocar token</span>
@@ -1250,7 +1334,7 @@
           <i class=ic-warn></i> Você está vendo uma prévia só nesta tela. Peça pro Victor ou Estevão publicarem oficialmente pra todo mundo ver.
         </div>
       </div>
-      <button id="btnCloseImport" class="btn-reset" style="margin-top:16px;">Fechar</button>
+      <button id="btnCloseImport" class="btn-modern btn-modern-text">Fechar</button>
     </div>
   </div>
 
