@@ -2790,9 +2790,17 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     Object.values(PENDENCIAS_PME).forEach(arr => arr.forEach(p => existentes.add(String(p.proposta))));
     let adicionadas = 0;
     propostas.filter(p => isAtiva(p.st) && p.g && !existentes.has(String(p.p))).forEach(p => {
-      (PENDENCIAS_PME[p.g] = PENDENCIAS_PME[p.g] || []).push({
+      // PENDENCIAS_PME é organizado pelo nome "bonito" (ex.: "Patricia Monks" — é assim que
+      // a Planilha1 grava, e é o que o Desempenho Comercial usa pra abrir esse modal). PROPOSTAS
+      // (Planium) traz o nome cru ("PATRICIA PESSOA MONKS") — sem essa conversão, a proposta
+      // reconciliada ia parar numa chave nova/separada, e só apareceria pra quem abrisse o
+      // modal vindo da Conversão (que manda o nome cru), não do Desempenho Comercial.
+      const gestorKey = window.getGestorFriendlyName ? window.getGestorFriendlyName(p.g) : p.g;
+      (PENDENCIAS_PME[gestorKey] = PENDENCIAS_PME[gestorKey] || []).push({
         proposta: p.p, corretora: p.co,
-        status: { planium: p.st, cadastro: '', ditec: '', bitix: '' },
+        // DITEC/CADASTRO o Planium já traz (ver parsePlaniumWorkbook) — só BITIX fica em
+        // branco mesmo, porque essa coluna só existe na Planilha1, não no Planium.
+        status: { planium: p.st, cadastro: p.ca || '', ditec: p.di || '', bitix: '' },
         dataReceb: p.dr || '', dataVigencia: p.vg, beneficiarios: p.bn,
       });
       adicionadas++;
@@ -2837,10 +2845,33 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
   let pendSortDir = -1;
   const pendMonthOf = dateStr => dateStr ? dateStr.slice(0,7) : null;
 
+  // Junta as entradas de um gestor guardadas sob as duas variantes de nome possíveis (o
+  // "bonito", ex. "Patricia Monks", e o cru da planilha, ex. "PATRICIA PESSOA MONKS") — hoje
+  // isso só deveria existir por causa de dados já publicados antes da chave ser normalizada
+  // (ver window.reconciliarPendenciasComPropostas), mas manter os dois juntos aqui evita que
+  // uma proposta "suma" de novo por causa de dado antigo até a próxima atualização completa.
+  // Não dá pra só comparar "friendly === gestorNome e parar por aí" (quando gestorNome já
+  // vem bonito, tipo do Desempenho Comercial) — precisa varrer as chaves do dicionário e
+  // achar quais delas convertem pro mesmo nome bonito, senão a variante crua fica de fora.
+  function pendenciasDoGestor(dict, gestorNome, idField){
+    const friendly = window.getGestorFriendlyName ? window.getGestorFriendlyName(gestorNome) : gestorNome;
+    const chaves = Object.keys(dict).filter(k =>
+      k === friendly || k === gestorNome ||
+      (window.getGestorFriendlyName && window.getGestorFriendlyName(k) === friendly));
+    const vistos = new Set();
+    const combinado = [];
+    chaves.forEach(k => (dict[k]||[]).forEach(p => {
+      const id = p[idField];
+      if (vistos.has(id)) return;
+      vistos.add(id);
+      combinado.push(p);
+    }));
+    return combinado;
+  }
   function renderPendencias(){
     const gestorNome = pendCurrentGestor;
-    const pme = PENDENCIAS_PME[gestorNome] || [];
-    const pf = PENDENCIAS_PF[gestorNome] || [];
+    const pme = pendenciasDoGestor(PENDENCIAS_PME, gestorNome, 'proposta');
+    const pf = pendenciasDoGestor(PENDENCIAS_PF, gestorNome, 'orcamento');
     document.getElementById('pendFilterLabel').textContent = pendActiveTab === 'pme' ? 'Filtrar por Data Vigência' : 'Filtrar por Data Status';
     document.getElementById('pendPropostaLabel').textContent = pendActiveTab === 'pme' ? 'Buscar por Nº da Proposta' : 'Buscar por Nº do Orçamento';
     document.getElementById('pendPropostaSearch').placeholder = pendActiveTab === 'pme' ? 'Ex.: 12345' : 'Ex.: 67890';
@@ -2909,11 +2940,9 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
   window.showPendenciasModal = function(gestorNome){
     // Aceita tanto o nome "bonito" (ex.: "Pablo Amora", como vem do Desempenho Comercial)
     // quanto o nome cru da planilha (ex.: "PABLO SERGIO RIBEIRO AMORA", como a aba Conversão
-    // usa, vindo do PLANIUM) — sem essa conversão, quem clicava a partir da Conversão sempre
-    // caía numa lista vazia, porque PENDENCIAS_PME/PF são gravadas com o nome bonito.
-    pendCurrentGestor = (PENDENCIAS_PME[gestorNome] || PENDENCIAS_PF[gestorNome])
-      ? gestorNome
-      : (window.getGestorFriendlyName ? window.getGestorFriendlyName(gestorNome) : gestorNome);
+    // usa, vindo do PLANIUM) — quem normaliza/junta as duas variantes é pendenciasDoGestor(),
+    // chamada dentro de renderPendencias(), então aqui só guarda o que veio mesmo.
+    pendCurrentGestor = gestorNome;
     pendActiveTab = 'pme';
     document.getElementById('pendModalGestor').textContent = gestorNome;
     document.getElementById('pendTabPme').classList.add('active');
@@ -7760,7 +7789,8 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     const idx = name => header.indexOf(name);
     const iProp = idx('oper_propnum'), iCn = idx('contratante_cnpj'), iEm = idx('contratante_nome'),
           iVg = idx('date_vigencia'), iSt = idx('status'), iBn = idx('beneficiarios'),
-          iVd = idx('vendedor_nome'), iCo = idx('corretora_nome'), iGe = idx('GESTOR'), iDr = idx('DATA RECEBIMENTO');
+          iVd = idx('vendedor_nome'), iCo = idx('corretora_nome'), iGe = idx('GESTOR'), iDr = idx('DATA RECEBIMENTO'),
+          iDi = idx('DITEC'), iCa = idx('CADASTRO');
     if ([iProp,iEm,iVg,iSt,iBn,iCo].some(i=>i<0)) throw new Error('A aba "PLANIUM" não tem as colunas esperadas (oper_propnum, contratante_nome, date_vigencia, status, beneficiarios, corretora_nome).');
     const fmtCnpj = v => {
       if (v === null || v === undefined || v === '') return '';
@@ -7780,6 +7810,11 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
         // consumia esse array antes deles existirem.
         g: iGe>=0 ? String(row[iGe]||'').trim() : '',
         dr: iDr>=0 ? excelDateToStr(row[iDr]) : '',
+        // DITEC/CADASTRO — o Planium já tem essas duas colunas (só BITIX que não existe
+        // aqui, só na Planilha1). Usado pra reconciliarPendenciasComPropostas mostrar em
+        // qual etapa a proposta está parada, em vez de deixar em branco.
+        di: iDi>=0 ? String(row[iDi]||'').trim() : '',
+        ca: iCa>=0 ? String(row[iCa]||'').trim() : '',
       });
     }
     if (!propostas.length) throw new Error('Nenhuma proposta reconhecida na aba "PLANIUM".');
