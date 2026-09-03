@@ -997,7 +997,7 @@
    dali, no lugar de literais embutidos no HTML.
    ========================================================= */
 (function(){
-  var EMPTY = {MJ_TEAMS_BY_MONTH:{}, currentMonth:"", PENDENCIAS_PME:{}, PENDENCIAS_PF:{}, MJ_CORRETORAS:{}, MJ_NAO_ATRIBUIDO_BY_MONTH:{}, MJ_BENCHMARK:[], DATA:[], RANKDATA:[], PROPOSTAS:[], RANK_CUR_LABEL:"", RANK_PREV_LABEL:"", CARTEIRA_MAP:null, publishedAt:""};
+  var EMPTY = {MJ_TEAMS_BY_MONTH:{}, currentMonth:"", PENDENCIAS_PME:{}, PENDENCIAS_PF:{}, MJ_CORRETORAS_BY_MONTH:{}, MJ_NAO_ATRIBUIDO_BY_MONTH:{}, MJ_BENCHMARK:[], DATA:[], RANKDATA:[], PROPOSTAS:[], RANK_CUR_LABEL:"", RANK_PREV_LABEL:"", CARTEIRA_MAP:null, publishedAt:""};
   function showFatalError(msg){
     document.addEventListener('DOMContentLoaded', function(){
       var b = document.createElement('div');
@@ -2430,7 +2430,19 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
   let PENDENCIAS_PME = window.__DASH_DATA__.PENDENCIAS_PME;
   let PENDENCIAS_PF = window.__DASH_DATA__.PENDENCIAS_PF;
   let PENDENCIAS_ASSINATURA = window.__DASH_DATA__.PENDENCIAS_ASSINATURA || {};
-  let MJ_CORRETORAS = window.__DASH_DATA__.MJ_CORRETORAS;
+  // Corretoras — vendas do período por gestor (painel "Corretoras — Vendas do Período" e
+  // Top 15 da Visão Geral) — guardado por mês, igual MJ_TEAMS_BY_MONTH. Antes era um valor
+  // único e "atual" (MJ_CORRETORAS achatado): trocar o "Mês de Referência" no dropdown não
+  // mudava essa tabela nenhum pouco, sempre repetindo os dados do último import "ao vivo" —
+  // e reimportar um mês passado nem sequer gravava (updateMetaJunhoData só tocava nisso
+  // quando isLive). Achado por Victor em 2026-09-02. Migração: se o data.json ainda for do
+  // formato antigo (campo achatado), usa ele como valor do mês atual.
+  let MJ_CORRETORAS_BY_MONTH = window.__DASH_DATA__.MJ_CORRETORAS_BY_MONTH ||
+    (window.__DASH_DATA__.MJ_CORRETORAS ? {[currentMonth]: window.__DASH_DATA__.MJ_CORRETORAS} : {});
+  function getCorretoras(month){
+    if (month && MJ_CORRETORAS_BY_MONTH[month]) return MJ_CORRETORAS_BY_MONTH[month];
+    return MJ_CORRETORAS_BY_MONTH[currentMonth] || {};
+  }
   // Corretoras "sem gestor atribuído" / "código não localizado no database" (linhas de
   // rodapé da planilha Meta) — guardado por mês, igual MJ_TEAMS_BY_MONTH. Antes era um valor
   // único e "atual": ao corrigir um mês passado (ex.: reimportar Julho estando em Agosto), o
@@ -2463,7 +2475,7 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     mjCorretorasGestor = gestorNome;
     const norm = s => String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
     const q = norm(document.getElementById('mjCorretorasSearch').value);
-    let rows = MJ_CORRETORAS[gestorNome] || [];
+    let rows = getCorretoras(currentMonth)[gestorNome] || [];
     if (q) rows = rows.filter(r => norm(r.n).includes(q) || norm(r.c).includes(q));
     const shown = rows.slice(0, 30);
     const corrBodyEl = document.getElementById('mjCorretorasBody');
@@ -2488,7 +2500,7 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     const gestorNames = selectedMember ? [selectedMember.nome] : td.members.map(m=>m.nome);
     const rows = [];
     gestorNames.forEach(g => {
-      (MJ_CORRETORAS[g] || []).forEach(c => {
+      (getCorretoras(currentMonth)[g] || []).forEach(c => {
         const v = c[field] || 0;
         if (v > 0) rows.push({n:c.n, codigo:c.c||'', gestor:g, filial:c.filial, vidas:v});
       });
@@ -2769,26 +2781,29 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
   window.getMetaJunhoData = function(month){
     // Com "month" informado e diferente do mês ao vivo, devolve os times já gravados
     // pra aquele mês específico (pra comparação correta ao corrigir um mês passado).
-    // benchmark/corretoras continuam sendo sempre os "atuais" (limitação conhecida);
-    // não-atribuído já é por mês (ver getNaoAtribuido).
+    // corretoras/não-atribuído já são por mês (ver getCorretoras/getNaoAtribuido) —
+    // benchmark continua sendo sempre o "atual" (limitação conhecida, menos crítica
+    // porque não varia por gestor/corretora).
     const teams = (month && MJ_TEAMS_BY_MONTH[month]) ? MJ_TEAMS_BY_MONTH[month] : MJ_TEAMS;
-    return { teams, benchmark: MJ_BENCHMARK, corretoras: MJ_CORRETORAS, naoAtribuido: getNaoAtribuido(month) };
+    return { teams, benchmark: MJ_BENCHMARK, corretoras: getCorretoras(month), naoAtribuido: getNaoAtribuido(month) };
   };
   window.updateMetaJunhoData = function(newData){
     // Grava sempre no mês que a planilha realmente representa (detectedMonth),
     // não sempre em "currentMonth" — senão um arquivo de mês passado sobrescreveria
-    // silenciosamente o mês atual. Só vira o "estado ao vivo" (currentMonth, benchmark,
-    // corretoras) se for o mês mais recente já conhecido — mas o não-atribuído é gravado
-    // por mês sempre, igual MJ_TEAMS_BY_MONTH, pra não vazar o valor de um mês pro outro.
+    // silenciosamente o mês atual. Só vira o "estado ao vivo" (currentMonth, benchmark)
+    // se for o mês mais recente já conhecido — mas corretoras/não-atribuído são
+    // gravados por mês sempre, igual MJ_TEAMS_BY_MONTH, pra não vazar o valor de um mês
+    // pro outro (achado por Victor em 2026-09-02: corretoras ainda não seguia essa
+    // regra, então trocar o "Mês de Referência" nunca mudava essa tabela).
     const targetMonth = newData.detectedMonth || currentMonth;
     const latest = Object.keys(MJ_TEAMS_BY_MONTH).sort().pop();
     const isLive = !latest || targetMonth >= latest;
     MJ_TEAMS_BY_MONTH[targetMonth] = newData.teams;
     if (newData.naoAtribuido) MJ_NAO_ATRIBUIDO_BY_MONTH[targetMonth] = newData.naoAtribuido;
+    if (newData.corretoras) MJ_CORRETORAS_BY_MONTH[targetMonth] = newData.corretoras;
     if (isLive){
       currentMonth = targetMonth;
       MJ_BENCHMARK = newData.benchmark;
-      if (newData.corretoras) MJ_CORRETORAS = newData.corretoras;
     }
     if (targetMonth === currentMonth) MJ_TEAMS = MJ_TEAMS_BY_MONTH[currentMonth];
     if (!MJ_TEAMS[currentTeam]) currentTeam = Object.keys(MJ_TEAMS)[0];
@@ -2839,7 +2854,7 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
       PENDENCIAS_PME: PENDENCIAS_PME,
       PENDENCIAS_PF: PENDENCIAS_PF,
       PENDENCIAS_ASSINATURA: PENDENCIAS_ASSINATURA,
-      MJ_CORRETORAS: MJ_CORRETORAS,
+      MJ_CORRETORAS_BY_MONTH: MJ_CORRETORAS_BY_MONTH,
       MJ_NAO_ATRIBUIDO_BY_MONTH: MJ_NAO_ATRIBUIDO_BY_MONTH,
       MJ_BENCHMARK: MJ_BENCHMARK,
     };
@@ -2893,9 +2908,12 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     // updateMetaJunhoData fazia isso) — senão a Visão Geral ficava mostrando o valor do
     // último import manual, mesmo depois de um dia inteiro de imports só com o extrato bruto.
     if (naoAtribuido) MJ_NAO_ATRIBUIDO_BY_MONTH[currentMonth] = naoAtribuido;
+    // Escreve sempre no balde do mês corrente (não num MJ_CORRETORAS achatado) — ver
+    // comentário na declaração de MJ_CORRETORAS_BY_MONTH.
+    const corretorasMes = MJ_CORRETORAS_BY_MONTH[currentMonth] = MJ_CORRETORAS_BY_MONTH[currentMonth] || {};
     const activeNames = new Set();
     Object.values(MJ_TEAMS).forEach(td => td.members.forEach(m => activeNames.add(m.nome)));
-    Object.keys(MJ_CORRETORAS).forEach(nome => { if (!activeNames.has(nome)) delete MJ_CORRETORAS[nome]; });
+    Object.keys(corretorasMes).forEach(nome => { if (!activeNames.has(nome)) delete corretorasMes[nome]; });
     Object.keys(MJ_TEAMS).forEach(teamName => {
       const td = MJ_TEAMS[teamName];
       td.members.forEach(m => {
@@ -2903,7 +2921,7 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
         if (upd){
           m.cat.IND.int = upd.ind; m.cat.SS.int = upd.ss; m.cat.PME.int = upd.pme; m.cat.ADM.int = upd.adm;
           m.total.int = upd.total;
-          MJ_CORRETORAS[m.nome] = upd.corretoras;
+          corretorasMes[m.nome] = upd.corretoras;
         }
       });
       td.total.int = td.members.reduce((s,m)=>s+m.total.int,0);
@@ -8378,7 +8396,7 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
       PENDENCIAS_PME: st.PENDENCIAS_PME,
       PENDENCIAS_PF: st.PENDENCIAS_PF,
       PENDENCIAS_ASSINATURA: st.PENDENCIAS_ASSINATURA,
-      MJ_CORRETORAS: st.MJ_CORRETORAS,
+      MJ_CORRETORAS_BY_MONTH: st.MJ_CORRETORAS_BY_MONTH,
       MJ_NAO_ATRIBUIDO_BY_MONTH: st.MJ_NAO_ATRIBUIDO_BY_MONTH,
       MJ_BENCHMARK: st.MJ_BENCHMARK,
       DATA: window.getEligibilidadeData ? window.getEligibilidadeData() : [],
