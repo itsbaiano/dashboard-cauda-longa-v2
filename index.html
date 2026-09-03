@@ -7240,17 +7240,29 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
       if (MONTH_HEADER_RE.test(normHdr(eligHeader1[i])) && normHdr(eligHeader2[i+3]) === 'TOTAL') monthCols.push(i+3);
     }
     if (!monthCols.length) throw new Error('Não consegui identificar as colunas de meses na aba ELEGIBILIDADE — o layout da planilha pode ter mudado.');
-    // 1TRI26/2TRI26 são os trimestres usados pela régua vigente (3TRI/26) pra calcular
-    // meta/gap — quando o 3TRI/26 fechar e o próximo trimestre começar, esses dois nomes
-    // vão precisar ser atualizados aqui (fora de escopo por enquanto, é um problema de
-    // outubro/26 em diante).
-    const idxT1 = findEligHeaderCol('1TRI26 TOTAL');
-    const idxT2 = findEligHeaderCol('2TRI26 TOTAL');
+    // Colunas de total por trimestre (ex.: "1TRI26 TOTAL", "2TRI26 TOTAL", "3TRI26 TOTAL"...)
+    // achadas por PADRÃO de texto, não por nome de trimestre fixo — antes eram hardcoded
+    // '1TRI26 TOTAL'/'2TRI26 TOTAL' (os dois únicos trimestres fechados quando esse código
+    // foi escrito, com 3TRI/26 em andamento) e quebravam assim que o trimestre seguinte
+    // fechasse e a Hapvida acrescentasse a próxima coluna. A régua vigente sempre usa os
+    // DOIS TRIMESTRES FECHADOS MAIS RECENTES pra calcular meta/gap do trimestre em
+    // andamento (t1 = penúltimo fechado, t2 = último fechado) — como a Hapvida sempre
+    // acrescenta a coluna nova mais à direita (mesmo padrão de monthCols acima), pegar as
+    // duas últimas colunas que baterem o padrão já garante os trimestres certos, sem
+    // precisar mexer nesse código de novo a cada virada de trimestre.
+    const TRI_TOTAL_RE = /^\dTRI\d{2} TOTAL$/;
+    const triTotalCols = [];
+    for (let i = 0; i < eligHeader1.length; i++){
+      if (TRI_TOTAL_RE.test(normHdr(eligHeader1[i]))) triTotalCols.push(i);
+    }
+    if (triTotalCols.length < 2) throw new Error('Não consegui identificar ao menos dois trimestres fechados (colunas tipo "2TRI26 TOTAL") na aba ELEGIBILIDADE — preciso de dois pra calcular a régua vigente. O layout da planilha pode ter mudado.');
+    const idxT1 = triTotalCols[triTotalCols.length - 2];
+    const idxT2 = triTotalCols[triTotalCols.length - 1];
     const idxTot17 = findEligHeaderCol('17 MESES TOTAIS');
     const idxEleg = findEligHeaderCol('ELEGIBILIDADE');
     const idxRank = findEligHeaderCol('RANKING');
-    if (idxT1 < 0 || idxT2 < 0 || idxTot17 < 0 || idxEleg < 0 || idxRank < 0){
-      throw new Error('Não consegui identificar as colunas de resumo (1TRI26/2TRI26/17 meses/Elegibilidade/Ranking) na aba ELEGIBILIDADE — o layout da planilha pode ter mudado.');
+    if (idxTot17 < 0 || idxEleg < 0 || idxRank < 0){
+      throw new Error('Não consegui identificar as colunas de resumo (17 meses/Elegibilidade/Ranking) na aba ELEGIBILIDADE — o layout da planilha pode ter mudado.');
     }
 
     const enrich = {};
