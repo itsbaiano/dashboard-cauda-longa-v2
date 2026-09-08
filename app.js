@@ -1,6 +1,15 @@
 // ===== extraído de index.html (dhTeamToggle/dhUpdatedText, ficou fora da extração
 //       mecânica original — corrigido em 2026-09-08, achado ao testar o site publicado) =====
 (function(){
+  // Achado 2026-09-08 testando ao vivo: no fluxo de login real (onAuthStateChanged pode
+  // disparar mais de uma vez pro mesmo usuário — comportamento normal do Firebase), esse
+  // bloco corria mais de uma vez, o que colocava dois listeners de clique no mesmo botão —
+  // cada clique alternava o estado duas vezes seguidas (uma desfazendo a outra), então
+  // clicar parecia não fazer nada. Essa trava faz o bloco só ter efeito uma vez, não importa
+  // quantas vezes seja executado.
+  if (window.__dhTeamToggleInit__) return;
+  window.__dhTeamToggleInit__ = true;
+
   var toggle = document.getElementById('dhTeamToggle');
   var list = document.getElementById('dhTeamList');
   toggle.addEventListener('click', function(){
