@@ -1,3 +1,26 @@
+// ===== extraído de index.html (dhTeamToggle/dhUpdatedText, ficou fora da extração
+//       mecânica original — corrigido em 2026-09-08, achado ao testar o site publicado) =====
+(function(){
+  var toggle = document.getElementById('dhTeamToggle');
+  var list = document.getElementById('dhTeamList');
+  toggle.addEventListener('click', function(){
+    var open = toggle.getAttribute('aria-expanded') === 'true';
+    toggle.setAttribute('aria-expanded', String(!open));
+    list.classList.toggle('open', !open);
+  });
+
+  // "Atualizado há Xs" — igual ao original que o Victor mandou: conta a partir do momento
+  // que a página abriu (não do publishedAt real), pra ficar idêntico ao que foi pedido.
+  var updatedText = document.getElementById('dhUpdatedText');
+  var seconds = 0;
+  updatedText.textContent = 'Atualizado agora';
+  setInterval(function(){
+    seconds += 1;
+    if (seconds < 60) updatedText.textContent = 'Atualizado há ' + seconds + 's';
+    else updatedText.textContent = 'Atualizado há ' + Math.floor(seconds/60) + ' min';
+  }, 1000);
+})();
+
 // ===== extraído de index.html linhas 1385-1402 =====
 // Liga o botão de tema — troca o atributo + salva a escolha + recarrega a página (mais simples
 // e seguro do que tentar recriar na mão todo gráfico já desenhado nas 5 abas; recarregar é rápido
