@@ -158,6 +158,18 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
 
   const fmt0 = n => Math.round(n).toLocaleString('pt-BR');
   const pctf = n => (n*100).toLocaleString('pt-BR', {minimumFractionDigits:1, maximumFractionDigits:1}) + '%';
+
+  // Dias úteis (seg-sex) entre dStart e dEnd (inclusive), dentro do mesmo mês/ano — usado pela
+  // "Meta Diária" abaixo. Decisão de Victor 2026-09-15: dias úteis, não corridos (a equipe não
+  // fecha proposta em fim de semana).
+  function countBusinessDays(y, m1, dStart, dEnd){
+    let c = 0;
+    for (let d = dStart; d <= dEnd; d++){
+      const wd = new Date(y, m1 - 1, d).getDay();
+      if (wd !== 0 && wd !== 6) c++;
+    }
+    return c;
+  }
   const pctColor = p => p >= 1 ? 'var(--green)' : (p >= 0.7 ? 'var(--amber)' : 'var(--red)');
   const pctBg = p => p >= 1 ? 'rgba(22,184,122,.14)' : (p >= 0.7 ? 'rgba(255,184,28,.16)' : 'rgba(245,54,74,.12)');
   const catLabels = {IND:'Individual', SS:'Super Simples', PME:'PME', ADM:'Administradora'};
@@ -291,11 +303,38 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
 
     const gap = total.meta - displayInt;
     const pctTotalAdj = total.meta ? displayInt/total.meta : 0;
+
+    // Meta Diária: quanto precisa vender por dia útil restante pra fechar o gap, e se o ritmo
+    // médio do mês (até ontem) já está enquadrado nesse número. Só faz sentido pro mês vigente
+    // de verdade (hoje) — num mês passado/futuro selecionado no dropdown, o gap já é histórico.
+    const todayReal = new Date();
+    const [gapY, gapM] = currentMonth.split('-').map(Number);
+    const isLiveMonth = todayReal.getFullYear() === gapY && (todayReal.getMonth() + 1) === gapM;
+    let metaDiariaKpi;
+    if (!isLiveMonth){
+      metaDiariaKpi = {icon:"<i class=ic-clock></i>", label:"Meta Diária (dias úteis)", value:"—", sub:"Mês não é o vigente", subClass:""};
+    } else if (gap <= 0){
+      metaDiariaKpi = {icon:"<i class=ic-clock></i>", label:"Meta Diária (dias úteis)", value:"Meta batida", sub:"Sem gap restante", subClass:"pos"};
+    } else {
+      const totalDiasNoMes = new Date(gapY, gapM, 0).getDate();
+      const diasUteisPassados = countBusinessDays(gapY, gapM, 1, todayReal.getDate() - 1);
+      const diasUteisRestantes = countBusinessDays(gapY, gapM, todayReal.getDate(), totalDiasNoMes);
+      const necessaria = diasUteisRestantes > 0 ? gap / diasUteisRestantes : gap;
+      if (diasUteisPassados === 0){
+        metaDiariaKpi = {icon:"<i class=ic-clock></i>", label:"Meta Diária (dias úteis)", value: fmt0(necessaria) + " vidas/dia", sub:"Ainda sem ritmo pra comparar", subClass:""};
+      } else {
+        const ritmo = displayInt / diasUteisPassados;
+        const enquadrado = ritmo >= necessaria;
+        metaDiariaKpi = {icon:"<i class=ic-clock></i>", label:"Meta Diária (dias úteis)", value: fmt0(necessaria) + " vidas/dia", sub: (enquadrado ? "Enquadrado" : "Fora do ritmo") + ` — ritmo atual ${fmt0(ritmo)}/dia`, subClass: enquadrado ? "pos" : "neg"};
+      }
+    }
+
     const kpis = [
       {icon:"<i class=ic-target></i>", label: selectedMember ? "Meta do Gestor" : (isAllTeamsAggregate ? "Meta Total — NDI SP" : "Meta Total do Time"), value: fmt0(total.meta) + " vidas", sub: monthLabelPt(currentMonth), subClass:""},
       {icon:"<i class=ic-check></i>", label:"Integrado (Realizado)", value: fmt0(displayInt) + " vidas", sub: naoAtribuidoTotal > 0 ? `Inclui ${fmt0(naoAtribuidoTotal)} vidas sem gestor/código não localizado` : (displayInt >= total.meta ? "Meta batida" : "Abaixo da meta"), subClass: displayInt >= total.meta ? "pos" : "warn"},
       {icon:"<i class=ic-chart></i>", label:"% Atingimento", value: pctf(pctTotalAdj), sub: pctTotalAdj >= 1 ? "Acima de 100%" : "Faltam " + pctf(1-pctTotalAdj) + " p/ meta", subClass: pctTotalAdj >= 1 ? "pos" : "neg"},
       {icon:"<i class=ic-warn></i>", label:"Gap p/ Meta", value: (gap>0?fmt0(gap):"0") + " vidas", sub:`Categoria crítica: ${catLabels[critKey]} (${pctf(critPct)})`, subClass:"neg"},
+      metaDiariaKpi,
     ];
     document.getElementById('mjKpiRow').innerHTML = kpis.map(k => `
       <div class="kpi"><div class="kpi-icon">${k.icon}</div><div class="label">${k.label}</div><div class="value">${k.value}</div><div class="sub ${k.subClass}">${k.sub}</div></div>
@@ -919,6 +958,12 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
   const RESUMO_EQUIPES = [...new Set(RESUMO_GESTORES.map(resumoEquipeOf))].sort();
   let resumoActiveTab = 'pme';
 
+  // Quais status do PF ainda "podem virar venda" — confirmado com Victor 2026-09-15 (pedido do
+  // sênior dele: ver o total do que a equipe ainda tem pra atuar). ASSINADO/PROCESSADO (já
+  // fechado) e CANCELADO/CANCELADO FALTA PAGTO./RECUSADO (já perdido) ficam de fora por serem
+  // desfecho final; AGUARDANDO PG e EM DIGITACAO também ficam de fora por decisão dele.
+  const PF_STATUS_PENDENTE = ['PENDENTE', 'AUDITORIA MEDICA', 'Pendente de auditoria médica', 'VALIDO E AUSENTE CRITICA', 'Validos com dados divergentes', 'CONFIRMACAO CLIENTE'];
+
   function initialsOf(nome){
     const partes = nome.trim().split(/\s+/);
     return ((partes[0]||'')[0] + (partes[1]||'')[0]).toUpperCase();
@@ -943,6 +988,25 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
       else if (p.status && p.status.planium === 'pendencia') pendencia += v;
     });
     return { funil: analise + pendencia, analise, pendencia };
+  }
+
+  // Soma PME (funil todo) + PF (só status ainda em andamento, ver PF_STATUS_PENDENTE) pro
+  // conjunto de gestores filtrado — é a "visão do sênior" pedida por Victor 2026-09-15: quanto
+  // a equipe toda ainda tem pra atuar, além do gap de meta já mostrado no Meta Junho.
+  function resumoTotais(gestores){
+    let pme = 0, pf = 0;
+    gestores.forEach(g => {
+      pme += resumoPmeStats(g).funil;
+      (PENDENCIAS_PF[g] || []).forEach(p => { if (PF_STATUS_PENDENTE.indexOf(p.status) >= 0) pf += (p.vidas || 0); });
+    });
+    return { pme, pf, total: pme + pf };
+  }
+
+  function renderResumoTotalBar(gestores){
+    const t = resumoTotais(gestores);
+    document.getElementById('rtbPme').textContent = fmt0(t.pme);
+    document.getElementById('rtbPf').textContent = fmt0(t.pf);
+    document.getElementById('rtbTotal').textContent = fmt0(t.total);
   }
 
   function renderResumoPme(gestores){
@@ -976,6 +1040,7 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
   function renderResumo(){
     const gestores = resumoGestoresFiltrados();
     if (resumoActiveTab === 'pme') renderResumoPme(gestores); else renderResumoPf(gestores);
+    renderResumoTotalBar(gestores);
   }
 
   // Clique num card/linha do Resumo do Dia leva pro popup detalhado que já existe no Desempenho
