@@ -421,6 +421,15 @@
   .resumo-card .rc-label{font-size:10.5px; color:var(--muted); margin-bottom:2px; font-weight:600;}
   .resumo-card .rc-value{font-size:19px; font-weight:800;}
 
+  /* Total da equipe (soma PME+PF) — pedido do sênior via Victor 2026-09-15: visão de "quanto
+     pode atuar" na equipe toda, some com os filtros de Equipe/Gestor já existentes acima. */
+  .resumo-total-bar{display:flex; gap:22px; flex-wrap:wrap; align-items:center; border-radius:12px; padding:14px 18px; margin-top:14px;
+    background:linear-gradient(125deg, var(--primary-dark) 0%, var(--primary-mid) 100%);}
+  .resumo-total-bar .rc-label{color:rgba(255,255,255,.65);}
+  .resumo-total-bar .rc-value{color:#fff;}
+  .resumo-total-bar .rtb-total{margin-left:auto; padding-left:22px; border-left:1px solid rgba(255,255,255,.25);}
+  .resumo-total-bar .rtb-total .rc-value{font-size:25px;}
+
   /* Resultado da busca (Elegibilidade) — quando poucas corretoras casam com a busca, os
      gráficos de % viram cards com o dado direto de cada uma. */
   .search-result-card{background:#f8faff; border-left:3px solid var(--primary-light); border-radius:11px; padding:14px 16px; cursor:pointer; transition:box-shadow .15s ease;}
@@ -1474,17 +1483,17 @@ window.__IS_LOCAL_TEST__ = window.location.hostname === '' || /^(localhost|127\.
       </div>
       <div class="dh-stats">
         <div class="dh-stat">
-          <div class="dh-avatar">EC</div>
+          <div class="dh-avatar">FB</div>
           <div class="dh-stat-text">
-            <span class="dh-stat-label">Gestor sênior</span>
-            <span class="dh-stat-value">Estevão Cardoso</span>
+            <span class="dh-stat-label">Diretora</span>
+            <span class="dh-stat-value">Fabyanna Boaventura</span>
           </div>
         </div>
         <div class="dh-divider"></div>
         <button class="dh-stat dh-stat-team" id="dhTeamToggle" aria-expanded="false" aria-controls="dhTeamList">
           <div class="dh-icon-circle"><i class=ic-users></i></div>
           <div class="dh-stat-text">
-            <span class="dh-stat-label">Gestores na equipe</span>
+            <span class="dh-stat-label">Sêniores</span>
             <span class="dh-stat-value">4
               <svg class="dh-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
             </span>
@@ -1495,10 +1504,10 @@ window.__IS_LOCAL_TEST__ = window.location.hostname === '' || /^(localhost|127\.
 
     <div class="dh-team-list" id="dhTeamList">
       <div class="dh-team-grid">
-        <div class="dh-team-member" onclick="if(window.jumpToMetaJunho)window.jumpToMetaJunho('Estevão Cardoso (Cauda Longa)','Agatha Sakamoto')"><div class="dh-avatar">AG</div><span>Agatha</span></div>
-        <div class="dh-team-member" onclick="if(window.jumpToMetaJunho)window.jumpToMetaJunho('Estevão Cardoso (Cauda Longa)','Jonathan Leal')"><div class="dh-avatar">JO</div><span>Jonathan</span></div>
-        <div class="dh-team-member" onclick="if(window.jumpToMetaJunho)window.jumpToMetaJunho('Estevão Cardoso (Cauda Longa)','Pablo Amora')"><div class="dh-avatar">PA</div><span>Pablo</span></div>
-        <div class="dh-team-member" onclick="if(window.jumpToMetaJunho)window.jumpToMetaJunho('Estevão Cardoso (Cauda Longa)','Patricia Monks')"><div class="dh-avatar">PT</div><span>Patrícia</span></div>
+        <div class="dh-team-member" onclick="if(window.jumpToMetaJunho)window.jumpToMetaJunho('Camila Foiadelli (Plataforma)',null)"><div class="dh-avatar">CF</div><span>Camila Foiadelli</span></div>
+        <div class="dh-team-member" onclick="if(window.jumpToMetaJunho)window.jumpToMetaJunho('Leonardo Mariano (ABC)',null)"><div class="dh-avatar">LM</div><span>Leonardo Mariano</span></div>
+        <div class="dh-team-member" onclick="if(window.jumpToMetaJunho)window.jumpToMetaJunho('Estevão Cardoso (Cauda Longa)',null)"><div class="dh-avatar">EC</div><span>Estevão Cardoso</span></div>
+        <div class="dh-team-member" onclick="if(window.jumpToMetaJunho)window.jumpToMetaJunho('Marcelo Lima (Digital)',null)"><div class="dh-avatar">ML</div><span>Marcelo Lima</span></div>
       </div>
     </div>
 
@@ -1694,6 +1703,11 @@ window.__IS_LOCAL_TEST__ = window.location.hostname === '' || /^(localhost|127\.
           <button class="subtab-btn active" id="resumoTabPme">PME / SS</button>
           <button class="subtab-btn" id="resumoTabPf">PF</button>
         </div>
+      </div>
+      <div class="resumo-total-bar" id="resumoTotalBar">
+        <div><div class="rc-label">Em Funil PME</div><div class="rc-value" id="rtbPme">0</div></div>
+        <div><div class="rc-label">Pendente PF</div><div class="rc-value" id="rtbPf">0</div></div>
+        <div class="rtb-total"><div class="rc-label">Total pra Atuar</div><div class="rc-value" id="rtbTotal">0</div></div>
       </div>
       <div id="resumoPmeView" style="margin-top:16px;">
         <div id="resumoCards" style="display:flex; flex-direction:column; gap:10px;"></div>
@@ -1896,7 +1910,7 @@ window.__IS_LOCAL_TEST__ = window.location.hostname === '' || /^(localhost|127\.
       </div>
     </div>
 
-    <div class="kpi-row" id="mjKpiRow" style="grid-template-columns:repeat(4,1fr);"></div>
+    <div class="kpi-row" id="mjKpiRow" style="grid-template-columns:repeat(5,1fr);"></div>
 
     <div class="grid-2">
       <div class="panel">
