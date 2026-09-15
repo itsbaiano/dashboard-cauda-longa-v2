@@ -340,12 +340,17 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
         const enquadrado = ritmo >= necessaria;
         metaDiariaKpi = {icon:"<i class=ic-clock></i>", label:"Meta Diária (dias úteis)", value: fmt0(necessaria) + " vidas/dia", sub: (enquadrado ? "Enquadrado" : "Fora do ritmo") + ` — ritmo atual ${fmt0(ritmo)}/dia`, subClass: enquadrado ? "pos" : "neg", onclick:"window.__openMjForecast()"};
         const projecaoAdicional = ritmo * diasUteisRestantes;
+        const projecao = displayInt + projecaoAdicional;
         mjForecastData = {
           titulo: selectedMember ? `${selectedMember.nome} — ${teamLabel}` : teamLabel,
           meta: total.meta, realizado: displayInt, gap, necessaria, ritmo, enquadrado,
           diasUteisPassados, diasUteisRestantes,
-          projecao: displayInt + projecaoAdicional, projecaoAdicional,
-          coberturaPct: gap > 0 ? projecaoAdicional / gap : null,
+          projecao, projecaoAdicional,
+          // Cobertura em relação à META (não ao gap) — pedido do sênior de Victor 2026-09-15,
+          // depois de ver a primeira versão baseada no gap: "a cobertura na realidade tem que
+          // ser baseada pela meta mesmo". Equivalente matemático de `enquadrado`
+          // (projecao>=meta ⟺ ritmo>=necessaria), só que expresso como %.
+          coberturaPct: total.meta > 0 ? projecao / total.meta : null,
         };
       }
     }
@@ -565,9 +570,13 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
   document.getElementById('mjBackToOverview').addEventListener('click', () => showView('overview'));
 
   // Modal "Meta Diária · Forecast" — pedido do sênior de Victor 2026-09-15 via WhatsApp: além do
-  // enquadramento, mostrar a projeção de fim de mês no ritmo atual e o quanto isso cobre do gap.
-  // Aberto pelo onclick embutido no card (ver kpis.map em renderMetaJunho); os números vêm de
-  // mjForecastData, calculado ali mesmo a cada render.
+  // enquadramento, mostrar o forecast de fim de mês no ritmo atual. Ajustado no mesmo dia, depois
+  // de ver funcionando ao vivo: (1) a cobertura mostrada precisa ser em relação à META, não ao
+  // gap ("a cobertura na realidade tem que ser baseada pela meta mesmo") — mesmo boolean de
+  // enquadrado (projecao>=meta ⟺ ritmo>=necessaria), só troca o número mostrado; (2) o nome vira
+  // "Forecast (Previsão)" em vez de "Projeção pro fim do mês". Aberto pelo onclick embutido no
+  // card (ver kpis.map em renderMetaJunho); os números vêm de mjForecastData, calculado ali mesmo
+  // a cada render.
   window.__openMjForecast = function(){
     const d = mjForecastData;
     if (!d) return;
@@ -577,7 +586,7 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
 
     const coberturaTxt = d.coberturaPct !== null ? pctf(d.coberturaPct) : '—';
     const tagEl = document.getElementById('mjForecastTag');
-    tagEl.textContent = (d.enquadrado ? '✓ Cobre ' : '⚠ Cobre só ') + coberturaTxt + ' do gap';
+    tagEl.textContent = (d.enquadrado ? '✓ ' : '⚠ ') + coberturaTxt + ' da meta';
     tagEl.className = 'forecast-tag ' + (d.enquadrado ? 'ok' : 'warn');
 
     const scaleMax = Math.max(d.projecao, d.meta, 1);
@@ -595,18 +604,18 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     zoneLabelEl.textContent = 'Gap · ' + fmt0(d.gap);
     document.getElementById('mjForecastLabelRealizado').textContent = 'Realizado · ' + fmt0(d.realizado);
     document.getElementById('mjForecastLabelMeta').textContent = 'Meta · ' + fmt0(d.meta);
-    document.getElementById('mjForecastLabelProjecao').textContent = 'Projeção · ' + fmt0(d.projecao);
+    document.getElementById('mjForecastLabelProjecao').textContent = 'Forecast · ' + fmt0(d.projecao);
 
     document.getElementById('mjForecastNecessariaValue').textContent = fmt0(d.necessaria) + '/dia';
     document.getElementById('mjForecastNecessariaSub').textContent = `Gap de ${fmt0(d.gap)} ÷ ${d.diasUteisRestantes} dias úteis restantes`;
     document.getElementById('mjForecastRitmoValue').textContent = fmt0(d.ritmo) + '/dia';
     document.getElementById('mjForecastRitmoSub').textContent = `${fmt0(d.realizado)} vidas ÷ ${d.diasUteisPassados} dias úteis já passados`;
-    const sobra = d.projecaoAdicional - d.gap;
+    const sobra = d.projecao - d.meta;
     const coberturaValEl = document.getElementById('mjForecastCoberturaValue');
-    coberturaValEl.textContent = `${fmt0(d.projecaoAdicional)} de ${fmt0(d.gap)}`;
+    coberturaValEl.textContent = `${fmt0(d.projecao)} de ${fmt0(d.meta)}`;
     coberturaValEl.style.color = d.enquadrado ? 'var(--green)' : 'var(--red)';
-    document.getElementById('mjForecastCoberturaSub').textContent = coberturaTxt + ' do gap' +
-      (sobra >= 0 ? ` — sobra de ${fmt0(sobra)} vidas além do necessário` : ` — faltariam ${fmt0(-sobra)} vidas nesse ritmo`);
+    document.getElementById('mjForecastCoberturaSub').textContent = coberturaTxt + ' da meta' +
+      (sobra >= 0 ? ` — sobra de ${fmt0(sobra)} vidas acima da meta` : ` — faltariam ${fmt0(-sobra)} vidas pra bater a meta nesse ritmo`);
 
     document.getElementById('mjForecastModalOverlay').style.display = 'flex';
   };
