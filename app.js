@@ -170,6 +170,13 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     }
     return c;
   }
+
+  // Quais status do PF ainda "podem virar venda" — confirmado com Victor 2026-09-15 (pedido do
+  // sênior dele). Declarada aqui (não junto do resto do bloco "Resumo do Dia" mais abaixo) porque
+  // o banner do Meta Junho já chama resumoTotais() na primeira renderização, que acontece antes
+  // daquele bloco rodar — um const declarado só lá embaixo cai em "Cannot access before
+  // initialization" nessa primeira chamada (achado testando localmente, 2026-09-15).
+  const PF_STATUS_PENDENTE = ['PENDENTE', 'AUDITORIA MEDICA', 'Pendente de auditoria médica', 'VALIDO E AUSENTE CRITICA', 'Validos com dados divergentes', 'CONFIRMACAO CLIENTE'];
   const pctColor = p => p >= 1 ? 'var(--green)' : (p >= 0.7 ? 'var(--amber)' : 'var(--red)');
   const pctBg = p => p >= 1 ? 'rgba(22,184,122,.14)' : (p >= 0.7 ? 'rgba(255,184,28,.16)' : 'rgba(245,54,74,.12)');
   const catLabels = {IND:'Individual', SS:'Super Simples', PME:'PME', ADM:'Administradora'};
@@ -339,6 +346,57 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     document.getElementById('mjKpiRow').innerHTML = kpis.map(k => `
       <div class="kpi"><div class="kpi-icon">${k.icon}</div><div class="label">${k.label}</div><div class="value">${k.value}</div><div class="sub ${k.subClass}">${k.sub}</div></div>
     `).join('');
+
+    // Banner do sênior: mesmos números de Total pra Atuar / Meta Diária já calculados acima,
+    // + Sugestão (quem/qual equipe tem mais pendência) — pedido de Victor 2026-09-15.
+    const bannerNames = selectedMember ? [selectedMember.nome] : members.map(m => m.nome);
+    const bannerTotais = resumoTotais(bannerNames);
+    document.getElementById('mjBannerTotalValue').textContent = fmt0(bannerTotais.total) + ' vidas';
+    document.getElementById('mjBannerTotalSub').textContent = `${fmt0(bannerTotais.pme)} em funil PME + ${fmt0(bannerTotais.pf)} pendentes PF`;
+
+    document.getElementById('mjBannerMetaValue').textContent = metaDiariaKpi.value;
+    const mjBannerMetaTagEl = document.getElementById('mjBannerMetaTag');
+    if (metaDiariaKpi.subClass === 'pos'){
+      mjBannerMetaTagEl.textContent = metaDiariaKpi.value === 'Meta batida' ? '✓ Meta batida' : '✓ Enquadrado';
+      mjBannerMetaTagEl.className = 'mjb-tag ok'; mjBannerMetaTagEl.style.display = '';
+    } else if (metaDiariaKpi.subClass === 'neg'){
+      mjBannerMetaTagEl.textContent = '⚠ Fora do ritmo';
+      mjBannerMetaTagEl.className = 'mjb-tag warn'; mjBannerMetaTagEl.style.display = '';
+    } else {
+      mjBannerMetaTagEl.style.display = 'none';
+    }
+
+    // Sugestão: não faz sentido "cobrar" a própria pessoa quando já se está vendo o gestor
+    // individual — nesse caso o card fica escondido. Na visão agregada (Todos os Times), sugere
+    // a EQUIPE com mais pendência (é uma visão de diretoria, não de cobrança direta a uma
+    // pessoa); dentro de uma equipe específica, sugere o EXECUTIVO com mais pendência dali.
+    const sugestaoBoxEl = document.getElementById('mjBannerSugestaoBox');
+    if (selectedMember){
+      sugestaoBoxEl.style.display = 'none';
+    } else {
+      sugestaoBoxEl.style.display = '';
+      let sugestaoHtml;
+      if (isAllTeamsAggregate){
+        let bestTeam = null, bestTotal = -1;
+        Object.keys(MJ_TEAMS).forEach(t => {
+          const tot = resumoTotais(MJ_TEAMS[t].members.map(m => m.nome)).total;
+          if (tot > bestTotal){ bestTotal = tot; bestTeam = t; }
+        });
+        sugestaoHtml = bestTotal > 0
+          ? `Olhar equipe <b>${bestTeam}</b> — ${fmt0(bestTotal)} vidas pendentes, o maior volume`
+          : `✅ Todas as equipes com funil limpo`;
+      } else {
+        let bestNome = null, bestTotal = -1;
+        members.forEach(m => {
+          const tot = resumoTotais([m.nome]).total;
+          if (tot > bestTotal){ bestTotal = tot; bestNome = m.nome; }
+        });
+        sugestaoHtml = bestTotal > 0
+          ? `Cobrar <b>${bestNome}</b> — ${fmt0(bestTotal)} vidas pendentes, o maior volume da equipe`
+          : `✅ Funil limpo — sem pendência acumulada no time`;
+      }
+      document.getElementById('mjBannerSugestaoText').innerHTML = sugestaoHtml;
+    }
 
     destroyMJChart('categoria');
     mjCharts.categoria = new Chart(document.getElementById('mjChartCategoria'), {
@@ -957,12 +1015,6 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
   const resumoEquipeOf = g => RESUMO_GESTOR_EQUIPE[g] || 'Outras equipes';
   const RESUMO_EQUIPES = [...new Set(RESUMO_GESTORES.map(resumoEquipeOf))].sort();
   let resumoActiveTab = 'pme';
-
-  // Quais status do PF ainda "podem virar venda" — confirmado com Victor 2026-09-15 (pedido do
-  // sênior dele: ver o total do que a equipe ainda tem pra atuar). ASSINADO/PROCESSADO (já
-  // fechado) e CANCELADO/CANCELADO FALTA PAGTO./RECUSADO (já perdido) ficam de fora por serem
-  // desfecho final; AGUARDANDO PG e EM DIGITACAO também ficam de fora por decisão dele.
-  const PF_STATUS_PENDENTE = ['PENDENTE', 'AUDITORIA MEDICA', 'Pendente de auditoria médica', 'VALIDO E AUSENTE CRITICA', 'Validos com dados divergentes', 'CONFIRMACAO CLIENTE'];
 
   function initialsOf(nome){
     const partes = nome.trim().split(/\s+/);
