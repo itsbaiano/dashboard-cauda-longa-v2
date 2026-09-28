@@ -1835,20 +1835,42 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
 
   function aggregateAssessorias(filtered){
     const periodMonths = getPeriodMonths();
+    const byCodigo = {};
+    filtered.forEach(d => { byCodigo[d.c] = d; });
     const groups = {};
     filtered.forEach(d => {
       const key = d.ass || '__SEM__';
       (groups[key] = groups[key] || []).push({ d, ctx: assCtx(d, periodMonths) });
     });
     let aggs = Object.entries(groups).map(([key, rows]) => {
-      const n = rows.length;
-      const eleg = rows.filter(r=>r.ctx.el===1).length;
-      const vidas = rows.reduce((s,r)=>s+r.ctx.periodTotal,0);
-      const meta = rows.reduce((s,r)=>s+(r.ctx.meta||0),0);
       // código da assessoria: pega o mais comum entre as corretoras do grupo
       const acod = key==='__SEM__' ? '' : (rows.map(r=>r.d.acod).find(x=>x && String(x).trim() !== '0') || '');
-      return { key, acod, name: key==='__SEM__'?'Sem assessoria vinculada':key, rows, n, eleg,
-        vidas, meta, pctEl: n?eleg/n*100:0, ating: meta>0?vidas/meta*100:0 };
+      // Inclui o código direto da assessoria (a própria corretora-âncora, ex.: assessoria "F8"
+      // tem código direto 0540 — confirmado com o Victor 2026-09-28) na soma do grupo. Ela não
+      // aparece com "ass" apontando pra si mesma, então sem isso ficava de fora da conta —
+      // mas continua aparecendo normal na tabela de Corretoras (não sai de lá, só passa a
+      // TAMBÉM contar no agregado da assessoria). O código direto é o próprio valor de COD_ASS
+      // que as multinotas do grupo já carregam (acod acima) — não existe tabela de referência
+      // separada pra isso, é só procurar esse código entre as corretoras normais.
+      const anchorD = (acod && byCodigo[acod]) ? byCodigo[acod] : null;
+      const rowsComAncora = (anchorD && !rows.some(r => r.d.c === anchorD.c))
+        ? rows.concat([{ d: anchorD, ctx: assCtx(anchorD, periodMonths) }])
+        : rows;
+      const n = rowsComAncora.length;
+      const eleg = rowsComAncora.filter(r=>r.ctx.el===1).length;
+      const vidas = rowsComAncora.reduce((s,r)=>s+r.ctx.periodTotal,0);
+      const meta = rowsComAncora.reduce((s,r)=>s+(r.ctx.meta||0),0);
+      // Elegibilidade/gap/classificação da ASSESSORIA COMO UM TODO — mesma fórmula da
+      // corretora individual (computePeriodElegRank/computeRankingFromVolume), só que aplicada
+      // no total somado (vidas/meta de todas as multinotas + a âncora), não "quantas corretoras
+      // do grupo são elegíveis individualmente" (isso já existia acima, é o pctEl). Pedido do
+      // Victor, 2026-09-28.
+      const eraMonths = periodMonths || (rowsComAncora[0] ? [rowsComAncora[0].d.m.length - 1] : [0]);
+      const elGroup = (meta > 0 && vidas >= meta) ? 1 : 0;
+      const rkGroup = computeRankingFromVolume(vidas, eraMonths);
+      const gapGroup = vidas - meta;
+      return { key, acod, name: key==='__SEM__'?'Sem assessoria vinculada':key, rows: rowsComAncora, n, eleg,
+        vidas, meta, pctEl: n?eleg/n*100:0, ating: meta>0?vidas/meta*100:0, elGroup, rkGroup, gapGroup };
     });
     // Busca por nome ou código da assessoria (só no modo assessorias)
     const norm = s => String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
@@ -1929,6 +1951,8 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
     const sorted = reais.concat(semv);
     document.getElementById('assRankBody').innerHTML = sorted.map(a=>{
       const cls = a.pctEl>=10?'good':(a.pctEl>0?'warn':'zero');
+      const elCls = a.key==='__SEM__' ? 'zero' : (a.elGroup ? 'good' : 'zero');
+      const elLabel = a.key==='__SEM__' ? '—' : (a.elGroup ? 'Elegível' : 'Não elegível');
       return `<tr data-k="${a.key.replace(/"/g,'&quot;')}">
         <td><div class="ass-rank-name">${a.name}</div>${a.acod?`<span style="font-size:10px;color:var(--muted);">cód. ${a.acod}</span>`:''}</td>
         <td class="num">${fmt0(a.n)}</td>
@@ -1936,6 +1960,8 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
         <td class="num">${fmt0(a.eleg)}</td>
         <td class="num"><span class="ass-rank-pct ${cls}">${a.pctEl.toFixed(1)}%</span></td>
         <td class="num">${a.meta>0?a.ating.toFixed(0)+'%':'—'}</td>
+        <td class="num">${a.key==='__SEM__'?'—':`<span class="ass-rank-pct ${elCls}">${elLabel}</span>`}</td>
+        <td class="num">${a.key==='__SEM__'?'—':a.rkGroup}</td>
       </tr>`;
     }).join('');
     document.querySelectorAll('#assRankBody tr').forEach(tr=>tr.addEventListener('click',()=>openAssDetail(tr.dataset.k)));
@@ -1959,7 +1985,7 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
   function renderAssessoriaDetail(agg, periodMonths){
     const detail = document.getElementById('assDetail');
     document.getElementById('assDetailTitle').textContent = agg.name;
-    const { rows, n, eleg, vidas, meta, pctEl, ating } = agg;
+    const { rows, n, eleg, vidas, meta, pctEl, ating, elGroup, rkGroup, gapGroup } = agg;
     const gestoresSet = [...new Set(rows.map(r=>shortGestorAss(r.d.g)))];
     const cycleTxt = periodMonths ? 'no período' : 'ciclo oficial';
     const kpis = `
@@ -1968,13 +1994,17 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
         <div class="ass-kpi" style="--ak:var(--accent-mint)"><div class="ak-label">Vidas Produzidas</div><div class="ak-val">${fmt0(vidas)}</div><div class="ak-sub">${cycleTxt}</div></div>
         <div class="ass-kpi" style="--ak:${pctEl>=10?'var(--accent-mint)':'var(--accent-gold)'}"><div class="ak-label">% Elegíveis</div><div class="ak-val">${pctEl.toFixed(1)}%</div><div class="ak-sub">${eleg} de ${n} corretoras</div></div>
         <div class="ass-kpi" style="--ak:${ating>=100?'var(--accent-mint)':'var(--accent-coral)'}"><div class="ak-label">Atingimento da Meta</div><div class="ak-val">${meta>0?ating.toFixed(0)+'%':'—'}</div><div class="ak-sub">${fmt0(vidas)} / ${fmt0(meta)} vidas</div></div>
+        <div class="ass-kpi" style="--ak:${elGroup?'var(--accent-mint)':'var(--accent-coral)'}"><div class="ak-label">Elegibilidade da Assessoria</div><div class="ak-val">${elGroup?'Elegível':'Não elegível'}</div><div class="ak-sub">${rkGroup} · gap ${gapGroup>=0?'+':''}${fmt0(gapGroup)} vidas</div></div>
       </div>`;
     const maxVidas = Math.max.apply(null, rows.map(r=>r.ctx.periodTotal).concat([1]));
     const sorted = rows.slice().sort((a,b)=>b.ctx.periodTotal - a.ctx.periodTotal);
     const tableRows = sorted.map(r => {
       const barW = (r.ctx.periodTotal/maxVidas*100).toFixed(1);
+      // Marca visualmente a corretora-âncora (código direto da assessoria) — ela conta na soma
+      // acima mas é fácil esquecer que ela também é uma corretora normal, não só um "total".
+      const isAnchor = agg.acod && r.d.c === agg.acod;
       return `<tr class="clickable" data-c="${r.d.c}">
-        <td><div class="ass-corr-name">${r.d.n}</div><span style="font-size:10px;color:var(--muted);">${shortGestorAss(r.d.g)}</span></td>
+        <td><div class="ass-corr-name">${r.d.n}${isAnchor?' <span style="font-size:10px;font-weight:700;color:var(--primary-light);">(código direto)</span>':''}</div><span style="font-size:10px;color:var(--muted);">${shortGestorAss(r.d.g)}</span></td>
         <td><span class="ass-rank-chip">${r.ctx.rk}</span></td>
         <td class="num">${fmt0(r.ctx.periodTotal)}</td>
         <td><div class="ass-mini-bar"><i style="width:${barW}%"></i></div></td>
@@ -2016,7 +2046,9 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
   document.querySelectorAll('#elViewSwitch .vs-btn').forEach(b=>b.addEventListener('click',()=>setElMode(b.dataset.mode)));
   document.getElementById('assDetailBack').addEventListener('click', closeAssDetail);
   document.querySelectorAll('#assRankTable thead th').forEach((th,i)=>{
-    const keys=['name','n','vidas','eleg','pctEl','ating'];
+    // 'elGroup'/'vidas' (não 'rkGroup') — classificação é função direta do volume, então
+    // ordenar por vidas já dá a mesma ordem, sem precisar de uma tabela de ranks pra comparar.
+    const keys=['name','n','vidas','eleg','pctEl','ating','elGroup','vidas'];
     th.addEventListener('click',()=>{ const k=keys[i]; if(assCurrentSort===k) assCurrentDir*=-1; else {assCurrentSort=k; assCurrentDir=(k==='name'?1:-1);} renderAssRankTable(aggregateAssessorias(applyFilters())); });
   });
 
@@ -5474,11 +5506,27 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
   // nem Carteira nem Ranking terminavam de aplicar naquele clique).
   window.normalizeCodigo = normalizeCodigo;
 
+  // Dígitos puros do CNPJ (sem máscara), preenchido com zero à esquerda até 14 — mesma
+  // normalização usada pros dois lados de qualquer cruzamento por CNPJ (Carteira x Planium),
+  // já que a Planium entrega o CNPJ como número puro (perde formatação/zeros à esquerda).
+  function cnpjDigits(v){
+    if (v === null || v === undefined || v === '') return '';
+    return String(v).replace(/\D/g,'').padStart(14,'0');
+  }
+  window.cnpjDigits = cnpjDigits;
+
   function parseCarteiraWorkbook(workbook){
     const sheet = findSheet(workbook, 'COMERCIAL');
     if (!sheet) throw new Error('Não encontrei a aba "COMERCIAL" no arquivo da Carteira.');
     const rows = sheetRows(sheet);
-    const map = {}; const byCodigo = {};
+    // Coluna do CNPJ localizada pelo texto do cabeçalho (não por índice fixo) — achado
+    // 2026-09-23 conferindo um arquivo real: a posição das colunas desliza dependendo de como
+    // o arquivo foi baixado (uma cópia tinha uma coluna A em branco na frente de tudo, outra
+    // não). Usado só pro Funil PME (byCnpj) — não mexe em nada do motor código→gestor
+    // (byCodigo/map), que já é validado com índice fixo e não deve ser tocado.
+    const headerRow = (rows[0]||[]).map(h => String(h||'').trim().toUpperCase());
+    const iCnpj = headerRow.indexOf('CNPJ');
+    const map = {}; const byCodigo = {}; const byCnpj = {};
     let count = 0;
     for (let i = 1; i < rows.length; i++){
       const row = rows[i] || [];
@@ -5494,10 +5542,17 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
       const entry = { gestorRaw: gestorRaw ? String(gestorRaw).trim() : '', equipe: equipe ? String(equipe).trim() : '', senior: senior ? String(senior).trim() : '', filial: filial ? String(filial).trim() : '', razao: String(razao).trim(), codAss: codAssNorm, assessoria: (assessoria && String(assessoria).trim() !== '0') ? String(assessoria).trim() : '' };
       map[key] = entry;
       (byCodigo[codNorm] = byCodigo[codNorm] || []).push(entry);
+      if (iCnpj >= 0 && entry.gestorRaw){
+        const cnpjNorm = cnpjDigits(row[iCnpj]);
+        // Primeira ocorrência vence em caso de CNPJ duplicado — mesmo critério "não
+        // sobrescreve" usado em outros mapas deste arquivo, evita um conflito raro decidir
+        // silenciosamente pra qualquer lado.
+        if (cnpjNorm && cnpjNorm !== '00000000000000' && !byCnpj[cnpjNorm]) byCnpj[cnpjNorm] = entry.gestorRaw;
+      }
       count++;
     }
     if (count === 0) throw new Error('Nenhuma linha válida encontrada na aba COMERCIAL.');
-    return { map, byCodigo, totalRows: count };
+    return { map, byCodigo, byCnpj, totalRows: count };
   }
 
   function resolveGestorFromCarteira(record, carteira, preferTeam){
@@ -5850,6 +5905,121 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     return html;
   }
 
+  // ===================== FUNIL PME — automação a partir dos 3 extratos brutos =====================
+  // Substitui o processo manual do "PME AUTOMATIZADO.xlsx" (2 extratos da Planium colados +
+  // dedup manual + T6140B colado + fórmulas de PROCV pra distribuir por gestor) — Victor sobe os
+  // 3 arquivos originais direto, sem montar planilha nenhuma. Ver conversa 2026-09-23: a aba
+  // RESULTADO FINAL daquele arquivo é PROCV(PLANIUM) + PROCV(T6140B), e a coluna GESTOR da
+  // PLANIUM vem de PROCV por CNPJ da corretora contra a mesma Carteira que já é usada aqui
+  // (parseCarteiraWorkbook/byCnpj) — não precisa de nenhum arquivo novo além do que já existia.
+  const stripAccentsUpper = s => String(s||'').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+
+  // Extrato bruto da Planium ("stats_export_gndi_XXXX.csv/.xlsx") — um por mês (Victor baixa
+  // mês atual + anterior). Aceita .csv direto (SheetJS já reconhece), sem precisar abrir no Excel.
+  function parsePmePlaniumRawWorkbook(workbook){
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = sheetRows(sheet);
+    const headerRowIdx = rows.findIndex(r => (r||[]).some(c => String(c||'').trim().toLowerCase() === 'propostaid'));
+    if (headerRowIdx < 0) return null; // não é um extrato da Planium — deixa o chamador tentar outro tipo
+    const header = rows[headerRowIdx].map(h => String(h||'').trim());
+    const idx = name => header.indexOf(name);
+    const iId = idx('propostaID'), iProp = idx('oper_propnum'), iCorrCnpj = idx('corretora_cnpj'),
+          iContrNome = idx('contratante_nome'), iContrCnpj = idx('contratante_cnpj'), iVg = idx('date_vigencia'),
+          iSt = idx('status'), iBn = idx('beneficiarios'), iVd = idx('vendedor_nome'), iCo = idx('corretora_nome');
+    if ([iId,iProp,iCorrCnpj,iContrNome,iVg,iSt,iBn,iCo].some(i=>i<0)){
+      throw new Error('O extrato da Planium não tem todas as colunas esperadas (propostaID, oper_propnum, corretora_cnpj, contratante_nome, date_vigencia, status, beneficiarios, corretora_nome).');
+    }
+    const records = [];
+    for (let i = headerRowIdx+1; i < rows.length; i++){
+      const row = rows[i] || [];
+      const id = row[iId], p = row[iProp], co = row[iCo];
+      if (!id || !p || !co) continue;
+      records.push({
+        id: String(id), p: String(p), corrCnpj: cnpjDigits(row[iCorrCnpj]),
+        cn: fmtCnpjDisplay(row[iContrCnpj]), em: String(row[iContrNome]||''),
+        vg: excelDateToStr(row[iVg]), st: String(row[iSt]||'').trim(), bn: num(row[iBn]),
+        vd: String(row[iVd]||''), co: String(co).trim(),
+      });
+    }
+    if (!records.length) throw new Error('Nenhuma proposta reconhecida no extrato da Planium.');
+    return records;
+  }
+  function fmtCnpjDisplay(v){
+    const digits = cnpjDigits(v);
+    return digits.length===14 ? `${digits.slice(0,2)}.${digits.slice(2,5)}.${digits.slice(5,8)}/${digits.slice(8,12)}-${digits.slice(12,14)}` : String(v||'');
+  }
+
+  // Extrato bruto do SIGO, tela T6140B ("CONFERENCIA_ORCAMENTO....csv/.xlsx") — cruza com a
+  // Planium por NU_CONTROLE = oper_propnum. Comparação de cabeçalho sem acento (stripAccentsUpper)
+  // porque esse export já veio com acentuação quebrada (encoding) em pelo menos um caso real.
+  function parseT6140bRawWorkbook(workbook){
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = sheetRows(sheet);
+    const headerRowIdx = rows.findIndex(r => (r||[]).some(c => stripAccentsUpper(c) === 'NU_CONTROLE'));
+    if (headerRowIdx < 0) return null; // não é um extrato do T6140B — deixa o chamador tentar outro tipo
+    const header = rows[headerRowIdx].map(h => stripAccentsUpper(h));
+    const idx = name => header.indexOf(name);
+    const iControle = idx('NU_CONTROLE'), iRecebimento = idx('DT_RECEBIMENTO'),
+          iAreaMedica = idx('STATUS_AREA_MEDICA'), iCadastro = idx('STATUS_CADASTRO'), iBitix = idx('STATUS_PROPOSTA_BITIX');
+    const byControle = {};
+    for (let i = headerRowIdx+1; i < rows.length; i++){
+      const row = rows[i] || [];
+      const controle = row[iControle];
+      if (!controle) continue;
+      byControle[String(controle)] = {
+        dtReceb: iRecebimento>=0 ? excelDateToStr(row[iRecebimento]) : '',
+        ditec: iAreaMedica>=0 ? String(row[iAreaMedica]||'').trim() : '',
+        cadastro: iCadastro>=0 ? String(row[iCadastro]||'').trim() : '',
+        bitix: iBitix>=0 ? String(row[iBitix]||'').trim() : '',
+      };
+    }
+    if (Object.keys(byControle).length === 0) throw new Error('Nenhuma linha reconhecida no extrato do T6140B.');
+    return byControle;
+  }
+
+  // Junta os extratos da Planium (dedup por propostaID mantendo a PRIMEIRA ocorrência — mesmo
+  // efeito do "Remover Duplicadas" do Excel que Victor já fazia na mão, sem olhar data) + T6140B
+  // (DATA RECEBIMENTO/DITEC/CADASTRO/BITIX) + Carteira (GESTOR, por CNPJ) pra reproduzir a aba
+  // RESULTADO FINAL sem montar a planilha. `planiumRecordsList` é um array de arrays (um por
+  // arquivo da Planium subido, na ordem em que foram lidos).
+  function buildPmeFromRawFiles(planiumRecordsList, t6140bByControle, carteira){
+    const seen = new Set();
+    const merged = [];
+    let totalBruto = 0;
+    planiumRecordsList.forEach(list => {
+      totalBruto += list.length;
+      list.forEach(rec => { if (!seen.has(rec.id)){ seen.add(rec.id); merged.push(rec); } });
+    });
+    const byCnpj = (carteira && carteira.byCnpj) || {};
+    const propostas = [];
+    const pendData = {};
+    const naoMapeados = {};
+    merged.forEach(rec => {
+      const t6 = (t6140bByControle && t6140bByControle[rec.p]) || null;
+      const gestorRaw = byCnpj[rec.corrCnpj] || '';
+      const dr = t6 ? t6.dtReceb : '', di = t6 ? t6.ditec : '', ca = t6 ? t6.cadastro : '', bi = t6 ? t6.bitix : '';
+      propostas.push({ p: rec.p, cn: rec.cn, em: rec.em, vg: rec.vg, st: rec.st, bn: rec.bn, vd: rec.vd, co: rec.co, g: gestorRaw, dr, di, ca });
+      if (!/pend|analis/i.test(rec.st)) return;
+      const friendly = FULL_19_GESTOR_RAW_MAP[stripAccentsUpper(gestorRaw)] || ABREV_GESTOR_MAP[stripAccentsUpper(gestorRaw)];
+      if (!friendly){
+        const label = gestorRaw || '(CNPJ da corretora não encontrado na Carteira)';
+        naoMapeados[label] = (naoMapeados[label]||0)+1;
+        return;
+      }
+      (pendData[friendly] = pendData[friendly] || []).push({
+        proposta: rec.p, corretora: rec.co,
+        status: { planium: rec.st, cadastro: ca, ditec: di, bitix: bi },
+        dataReceb: dr, dataVigencia: rec.vg, beneficiarios: rec.bn,
+      });
+    });
+    return {
+      propostas,
+      pendData: { data: pendData, naoMapeados },
+      totalArquivos: planiumRecordsList.length, totalBruto, totalMerged: merged.length,
+      duplicatasRemovidas: totalBruto - merged.length,
+    };
+  }
+
   const FULL_19_GESTOR_RAW_MAP = {
     'AGATHA EIKO RODRIGUES SAKAMOTO':'Agatha Sakamoto','PATRICIA PESSOA MONKS':'Patricia Monks',
     'JONATHAN LEAL DOS SANTOS SILVA':'Jonathan Leal','PABLO SERGIO RIBEIRO AMORA':'Pablo Amora',
@@ -6101,12 +6271,12 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     const metaFile = document.getElementById('fileMetaJunho').files[0];
     const eligFile = document.getElementById('fileElegibilidade').files[0];
     const carteiraFile = document.getElementById('fileCarteira').files[0];
-    const pendPmeFile = document.getElementById('filePendPme').files[0];
+    const pendPmeFiles = Array.from(document.getElementById('filePendPme').files);
     const pendPfFile = document.getElementById('filePendPf').files[0];
     const assinaturaFile = document.getElementById('fileAssinatura').files[0];
     const crescimentoGeralFile = document.getElementById('fileCrescimentoGeral').files[0];
     const rankPrevFile = document.getElementById('fileRankPrev').files[0];
-    if (!metaFile && !eligFile && !carteiraFile && !pendPmeFile && !pendPfFile && !assinaturaFile && !crescimentoGeralFile && !rankPrevFile){
+    if (!metaFile && !eligFile && !carteiraFile && !pendPmeFiles.length && !pendPfFile && !assinaturaFile && !crescimentoGeralFile && !rankPrevFile){
       statusEl.innerHTML = '<p style="color:var(--red);font-size:12.5px;">Selecione ao menos um arquivo.</p>';
       return;
     }
@@ -6195,18 +6365,54 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
       if (pendingCarteira){
         summaryHtml += diffCarteira(pendingCarteira, pendingElig);
       }
-      if (pendPmeFile){
-        statusEl.innerHTML = '<p style="font-size:12.5px;color:var(--muted);">Lendo Pendências PME/SS...</p>';
-        const wb = await readFileAsWorkbook(pendPmeFile);
-        pendingPendPme = parsePmePendenciasWorkbook(wb);
-        summaryHtml += diffPendPme(pendingPendPme);
-        // Mesmo arquivo tem a aba "PLANIUM" (histórico completo de propostas) — atualiza junto
-        // a lista usada no Ranking de Vendas, sem precisar de um upload separado.
-        try {
-          pendingPropostas = parsePlaniumWorkbook(wb);
-          summaryHtml += diffPropostas(pendingPropostas);
-        } catch(e){
-          summaryHtml += `<div style="font-size:12px; margin-top:6px; color:var(--muted);">Propostas do Ranking não atualizadas: ${e.message}</div>`;
+      if (pendPmeFiles.length){
+        statusEl.innerHTML = '<p style="font-size:12.5px;color:var(--muted);">Lendo Funil PME...</p>';
+        // Auto-detecção igual ao bloco principal: cada arquivo solto no campo é classificado
+        // pelo conteúdo. Aceita tanto o jeito antigo (1 arquivo, PME AUTOMATIZADO.xlsx pronto,
+        // abas Planilha1 + PLANIUM) quanto o novo (extratos brutos soltos — 1-2 da Planium +
+        // opcional o T6140B), sem precisar de campo separado pra cada um.
+        let combinedWb = null;
+        const planiumRawList = [];
+        let t6140bByControle = null;
+        const pendNaoReconhecidos = [];
+        for (const file of pendPmeFiles){
+          const wb = await readFileAsWorkbook(file);
+          if (!combinedWb && findSheet(wb, 'Planilha1') && findSheet(wb, 'PLANIUM')){
+            combinedWb = wb;
+            continue;
+          }
+          const planiumRecords = parsePmePlaniumRawWorkbook(wb);
+          if (planiumRecords){ planiumRawList.push(planiumRecords); continue; }
+          const t6 = parseT6140bRawWorkbook(wb);
+          if (t6){ t6140bByControle = t6; continue; }
+          pendNaoReconhecidos.push(file.name);
+        }
+        if (combinedWb){
+          pendingPendPme = parsePmePendenciasWorkbook(combinedWb);
+          summaryHtml += diffPendPme(pendingPendPme);
+          // Mesmo arquivo tem a aba "PLANIUM" (histórico completo de propostas) — atualiza junto
+          // a lista usada no Ranking de Vendas, sem precisar de um upload separado.
+          try {
+            pendingPropostas = parsePlaniumWorkbook(combinedWb);
+            summaryHtml += diffPropostas(pendingPropostas);
+          } catch(e){
+            summaryHtml += `<div style="font-size:12px; margin-top:6px; color:var(--muted);">Propostas do Ranking não atualizadas: ${e.message}</div>`;
+          }
+        } else if (planiumRawList.length){
+          const carteiraForPme = pendingCarteira || window.CARTEIRA_MAP || null;
+          if (!carteiraForPme){
+            summaryHtml += `<div style="color:var(--red);font-size:12.5px;"><i class=ic-warn></i> Funil PME: sem Carteira carregada ainda (nem nesta importação, nem de uma anterior) — não dá pra descobrir o gestor de cada corretora. Suba a Carteira pelo menos uma vez antes.</div>`;
+          } else {
+            const result = buildPmeFromRawFiles(planiumRawList, t6140bByControle, carteiraForPme);
+            pendingPendPme = result.pendData;
+            pendingPropostas = result.propostas;
+            summaryHtml += diffPendPme(pendingPendPme);
+            summaryHtml += diffPropostas(pendingPropostas);
+            summaryHtml += `<div style="font-size:12.5px; margin-top:6px; color:var(--blue);">Funil PME — ${result.totalArquivos} extrato(s) da Planium, ${result.totalBruto} propostas brutas, ${result.duplicatasRemovidas} duplicata(s) removida(s) (mesma propostaID em mais de um arquivo).${t6140bByControle ? '' : ' <b>T6140B não incluído</b> — DATA RECEBIMENTO/DITEC/CADASTRO/BITIX ficam em branco.'}</div>`;
+          }
+        }
+        if (pendNaoReconhecidos.length){
+          summaryHtml += `<div style="color:var(--red);font-size:12.5px;"><i class=ic-warn></i> Funil PME: não reconheci ${pendNaoReconhecidos.join(', ')} — confira se é um extrato da Planium, do T6140B, ou a planilha PME AUTOMATIZADO já pronta.</div>`;
         }
       }
       if (pendPfFile){

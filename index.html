@@ -1594,8 +1594,8 @@ window.__IS_LOCAL_TEST__ = window.location.hostname === '' || /^(localhost|127\.
             <div class="upload-card-icon"><i class=ic-doc></i></div>
             <div class="upload-card-title">Funil PME</div>
           </div>
-          <p class="upload-card-hint">Pendências detalhadas por status + SLA (aba Conversão).</p>
-          <div class="file-field"><input type="file" id="filePendPme" accept=".xlsx"></div>
+          <p class="upload-card-hint">Pendências detalhadas por status + SLA (aba Conversão). Solte os 2 extratos da Planium (mês atual + anterior) + o extrato do T6140B — ou, se preferir, a planilha PME AUTOMATIZADO já pronta, como antes.</p>
+          <div class="file-field"><input type="file" id="filePendPme" accept=".xlsx,.csv" multiple></div>
         </div>
         <div class="upload-card">
           <button type="button" class="upload-card-check file-clear" data-target="filePendPf" title="Remover arquivo">✕</button>
@@ -2324,6 +2324,7 @@ window.__IS_LOCAL_TEST__ = window.location.hostname === '' || /^(localhost|127\.
             <thead><tr>
               <th>Assessoria</th><th class="num">Corretoras</th><th class="num">Vidas</th>
               <th class="num">Elegíveis</th><th class="num">% Eleg.</th><th class="num">Atingimento</th>
+              <th class="num">Elegibilidade (total)</th><th class="num">Classificação</th>
             </tr></thead>
             <tbody id="assRankBody"></tbody>
           </table>
