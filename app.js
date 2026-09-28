@@ -1738,7 +1738,17 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
     return '13+ meses';
   }
   const DORMANCY_ORDER = ['3 meses','4–6 meses','7–12 meses','13+ meses'];
-  const GESTOR_COLORS = {'Agatha Sakamoto':'#2E52D4','Patricia Monks':'#F26B21','Jonathan Leal':'#101E63','Pablo Amora':'#16B87A','Sem Gestor Atribuído':'#94a3b8'};
+  const GESTOR_COLORS = {'Agatha Sakamoto':'#2E52D4','Patricia Monks':'#F26B21','Jonathan Leal':'#101E63','Pablo Amora':'#16B87A','Sem Gestor Atribuído':'#94a3b8',
+    'Erika de Sousa Silva':'#0EA5E9','Camila Alves Pertinhez':'#8B5CF6','Lais dos Santos Martins':'#EC4899','Wilder Coca Patzi':'#14B8A6',
+    'Karollainny Rangel de Sousa Lopes':'#F59E0B','Daniela Novais dos Santos':'#EF4444','Amanda dos Santos Sobral':'#6366F1','Maxuel Pimentel Nobrega':'#84CC16',
+    'Vivian de Cassia Ambrosio':'#06B6D4','Guilherme de Lima Musachi':'#A855F7','Izabele de Oliveira da Silva':'#F97316'};
+  // Gráfico horizontal "por gestor": com 15 gestores (4 equipes) a altura fixa fazia o Chart.js
+  // pular rótulos (barra sem nome) — cresce a caixa conforme o número de gestores. Portado do
+  // V1, 2026-09-28.
+  function fitGestorChartHeight(n){
+    const box = document.getElementById('chartElGestor').parentElement;
+    box.style.height = Math.max(280, n * 28 + 60) + 'px';
+  }
 
   function showChartDrilldown(title, list){
     // Precisa mostrar o overlay ANTES de criar o gráfico: com o container ainda
@@ -2292,6 +2302,7 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
       const reactGestorNames = Object.keys(reactByGestor).sort((a,b)=>reactByGestor[b].length-reactByGestor[a].length);
       document.getElementById('elGestorTitle').textContent = 'Oportunidades de Reativação por Gestor';
       document.getElementById('elGestorSub').textContent = `${fmt0(n)} corretoras no total — clique numa barra para filtrar por gestor`;
+      fitGestorChartHeight(reactGestorNames.length);
       charts.elGestor = new Chart(document.getElementById('chartElGestor'), {
         type:'bar',
         data:{ labels: reactGestorNames.map(shortGestor), datasets:[{ data: reactGestorNames.map(g=>reactByGestor[g].length),
@@ -2304,7 +2315,7 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
             const potg = l.reduce((s,d)=>s+d.tot,0);
             return [`${l.length} oportunidade(s)`, `${fmt0(potg)} vidas em potencial`, 'Clique para filtrar'];
           }}}},
-          scales:{ x:{beginAtZero:true, grid:{color:'#eef1f6'}}, y:{grid:{display:false}, ticks:{font:{size:11, weight:'600'}}} } }
+          scales:{ x:{beginAtZero:true, grid:{color:'#eef1f6'}}, y:{grid:{display:false}, ticks:{autoSkip:false, font:{size:11, weight:'600'}}} } }
       });
 
       const sortedReact = [...filtered].sort((a,b)=>b.tot-a.tot);
@@ -2579,6 +2590,7 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
       c.beginPath(); c.moveTo(x, top); c.lineTo(x, bottom); c.stroke(); c.restore();
     }};
     destroyChart('elGestor');
+    fitGestorChartHeight(gestorNames.length);
     charts.elGestor = new Chart(document.getElementById('chartElGestor'), {
       type:'bar',
       data:{ labels: gestorNames.map(shortGestor), datasets:[{ data: gestorPcts,
@@ -2590,7 +2602,7 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
           const g = gestorNames[c.dataIndex]; const l = byGestor[g];
           return [`${c.parsed.x.toFixed(1)}% elegíveis`, `${l.filter(r=>r.ctx.el===1).length} de ${l.length} corretoras`, 'Clique para filtrar'];
         }}}},
-        scales:{ x:{beginAtZero:true, max:Math.max(10, Math.ceil(Math.max.apply(null, gestorPcts.concat([pctEl]))/5)*5+5), grid:{color:'#eef1f6'}, ticks:{callback:v=>v+'%'}}, y:{grid:{display:false}, ticks:{font:{size:11, weight:'600'}}} } },
+        scales:{ x:{beginAtZero:true, max:Math.max(10, Math.ceil(Math.max.apply(null, gestorPcts.concat([pctEl]))/5)*5+5), grid:{color:'#eef1f6'}, ticks:{callback:v=>v+'%'}}, y:{grid:{display:false}, ticks:{autoSkip:false, font:{size:11, weight:'600'}}} } },
       plugins:[avgLinePlugin]
     });
 
@@ -4266,7 +4278,43 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
     return found;
   };
   window.updateEligibilidadeData = function(newRecords){
-    DATA = newRecords;
+    // Funde com o DATA já existente em vez de substituir tudo — porta pro V2 o mesmo bug/fix já
+    // achado e corrigido no V1 (2026-09-09/17): `DATA = newRecords` descartava silenciosamente
+    // qualquer corretora que não estivesse no arquivo importado — inofensivo enquanto só existia
+    // a Cauda Longa (o arquivo "mestre" sempre trazia todo mundo de uma vez), mas destrutivo na
+    // hora de importar as 4 equipes em arquivos separados: subir o da Digital apagaria Cauda
+    // Longa/ABC/Plataforma inteiras. Ver project_v1_v2_merge_in_progress / [[project_dashboard_v2_base_is_v1]] na memória.
+    const oldByCode = {};
+    DATA.forEach(d => { oldByCode[window.normalizeCodigo(d.c)] = d; });
+    const touchedCodes = {};
+    const updated = newRecords.map(rec => {
+      const key = window.normalizeCodigo(rec.c);
+      touchedCodes[key] = true;
+      const old = oldByCode[key];
+      const fileLastIdx = rec.m.length - 1;
+      if (old && old.m && old.m.length > rec.m.length){
+        // Arquivo mais curto que o que já tínhamos — só atualiza o retrato histórico do mês
+        // que ele cobre, mantém m/mc/el/rk/tot atuais (mais completos) intocados.
+        const elByMonth = Object.assign({}, old.elByMonth);
+        elByMonth[fileLastIdx] = rec.el;
+        return Object.assign({}, old, { elByMonth });
+      }
+      const elByMonth = Object.assign({}, old && old.elByMonth);
+      elByMonth[fileLastIdx] = rec.el;
+      return Object.assign({}, rec, { elByMonth });
+    });
+    // Preserva registros de OUTRAS equipes que este import não tocou.
+    const untouched = DATA.filter(d => !touchedCodes[window.normalizeCodigo(d.c)]);
+    DATA = updated.concat(untouched);
+    // Alinha m[]/mc[] de todo mundo no mesmo tamanho — uma equipe pode ter seu próprio import
+    // "atrasado" (ainda não chegou no mês mais recente que outra equipe já tem) — completa
+    // sempre por TRÁS com zero, nunca por decisão de negócio, só união de tamanho.
+    const maxLen = DATA.reduce((mx,d) => Math.max(mx, d.m ? d.m.length : 0), 0);
+    DATA.forEach(d => {
+      if (!d.m) return;
+      while (d.m.length < maxLen) d.m.push(0);
+      if (d.mc){ ['pf','ss','pme'].forEach(k => { if (d.mc[k]) while (d.mc[k].length < maxLen) d.mc[k].push(0); }); }
+    });
     refreshMonthDerivedState();
     EL_GESTORES.length = 0;
     [...new Set(DATA.map(d=>d.g))].sort().forEach(g=>EL_GESTORES.push(g));
@@ -5173,6 +5221,20 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
       if (MONTH_HEADER_RE.test(normHdr(eligHeader1[i])) && normHdr(eligHeader2[i+3]) === 'TOTAL') monthCols.push(i+3);
     }
     if (!monthCols.length) throw new Error('Não consegui identificar as colunas de meses na aba ELEGIBILIDADE — o layout da planilha pode ter mudado.');
+    // Equipes novas (Plataforma SP/ABC/Digital) só têm dado a partir de Jan/2026 — o arquivo
+    // delas literalmente só tem 9 colunas de mês, contra as ~21 da Cauda Longa (que começa em
+    // Jan/2025). Pra entrar no mesmo DATA[] compartilhado (todo registro precisa ter m[] do
+    // mesmo tamanho), completa com zero por trás os meses de 2025 que essas equipes não têm —
+    // nunca inventa número. Pra Cauda Longa (primeiro mês = Jan/25) isso dá padCount=0,
+    // comportamento idêntico a antes. Portado do V1, 2026-09-28 (Victor: "porta tudo pro V2").
+    const MONTH_NAME_TO_NUM = {JANEIRO:1,FEVEREIRO:2,MARCO:3,ABRIL:4,MAIO:5,JUNHO:6,JULHO:7,AGOSTO:8,SETEMBRO:9,OUTUBRO:10,NOVEMBRO:11,DEZEMBRO:12};
+    const monthHeaderToGlobalIdx = headerText => {
+      const m = normHdr(headerText).match(/^([A-Z]+) ?(\d{2})$/);
+      if (!m || !MONTH_NAME_TO_NUM[m[1]]) return 0;
+      return (2000 + Number(m[2]) - 2025) * 12 + (MONTH_NAME_TO_NUM[m[1]] - 1);
+    };
+    const padCount = Math.max(0, monthHeaderToGlobalIdx(eligHeader1[monthCols[0] - 3]));
+    const padFront = arr => padCount > 0 ? [...Array(padCount).fill(0), ...arr] : arr;
     // Colunas de total por trimestre (ex.: "1TRI26 TOTAL", "2TRI26 TOTAL", "3TRI26 TOTAL"...)
     // achadas por PADRÃO de texto, não por nome de trimestre fixo — antes eram hardcoded
     // '1TRI26 TOTAL'/'2TRI26 TOTAL' (os dois únicos trimestres fechados quando esse código
@@ -5191,11 +5253,27 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     if (triTotalCols.length < 2) throw new Error('Não consegui identificar ao menos dois trimestres fechados (colunas tipo "2TRI26 TOTAL") na aba ELEGIBILIDADE — preciso de dois pra calcular a régua vigente. O layout da planilha pode ter mudado.');
     const idxT1 = triTotalCols[triTotalCols.length - 2];
     const idxT2 = triTotalCols[triTotalCols.length - 1];
-    const idxTot17 = findEligHeaderCol('17 MESES TOTAIS');
+    // "<N> MESES TOTAIS" — antes hardcoded "17 MESES TOTAIS" (só a Cauda Longa tinha 17 meses);
+    // as equipes novas têm 9 ("9 MESES TOTAIS", Jan-Set/26). Padrão genérico, cresce sozinho.
+    const MESES_TOTAIS_RE = /^\d+\s*MESES TOTAIS$/;
+    let idxTot17 = -1;
+    for (let i = 0; i < eligHeader1.length; i++){ if (MESES_TOTAIS_RE.test(normHdr(eligHeader1[i]))){ idxTot17 = i; break; } }
     const idxEleg = findEligHeaderCol('ELEGIBILIDADE');
     const idxRank = findEligHeaderCol('RANKING');
     if (idxTot17 < 0 || idxEleg < 0 || idxRank < 0){
-      throw new Error('Não consegui identificar as colunas de resumo (17 meses/Elegibilidade/Ranking) na aba ELEGIBILIDADE — o layout da planilha pode ter mudado.');
+      throw new Error('Não consegui identificar as colunas de resumo (N meses totais/Elegibilidade/Ranking) na aba ELEGIBILIDADE — o layout da planilha pode ter mudado.');
+    }
+    // Colunas de metadado (código/nome/grade/assessoria/gestor) — antes eram posição fixa
+    // (row[0..4]), o que só funcionava pra Cauda Longa. As equipes novas têm 4 colunas (sem
+    // grade) em ordem diferente — agora acha cada uma pelo texto do cabeçalho, então funciona
+    // com qualquer ordem/presença. Grade fica opcional (só a Cauda Longa tem).
+    const idxCodigo = findEligHeaderCol('CODIGO');
+    const idxNome = findEligHeaderCol('NOME CORRETOR', 'RAZAO SOCIAL', 'NOME');
+    const idxGrade = findEligHeaderCol('GRADE DE COMISSAO', 'GRADE');
+    const idxAssessoria = findEligHeaderCol('ASSESSORIA', 'ASSESORIA');
+    const idxGestorRaw = findEligHeaderCol('GESTOR', 'GERENTE');
+    if (idxCodigo < 0 || idxNome < 0){
+      throw new Error('Não consegui identificar as colunas de código/nome da corretora na aba ELEGIBILIDADE — o layout da planilha pode ter mudado.');
     }
 
     const enrich = {};
@@ -5226,22 +5304,25 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     const records = [];
     for (let i = 2; i < rows.length; i++){
       const row = rows[i] || [];
-      const codigo = row[0];
+      const codigo = row[idxCodigo];
       if (codigo === null || codigo === undefined || codigo === '') continue;
-      const nome = (row[1] === null || row[1] === undefined || row[1] === '') ? '(Sem nome cadastrado)' : String(row[1]).trim();
-      const grade = row[2] != null ? String(row[2]) : '';
-      const assessoriaRaw = (row[3] === null || row[3] === undefined || row[3] === '' || String(row[3]).trim() === '0') ? '' : String(row[3]).trim();
-      const gestorRaw = row[4];
+      const nome = (row[idxNome] === null || row[idxNome] === undefined || row[idxNome] === '') ? '(Sem nome cadastrado)' : String(row[idxNome]).trim();
+      const grade = (idxGrade >= 0 && row[idxGrade] != null) ? String(row[idxGrade]) : '';
+      const assessoriaRaw = (idxAssessoria < 0 || row[idxAssessoria] === null || row[idxAssessoria] === undefined || row[idxAssessoria] === '' || String(row[idxAssessoria]).trim() === '0') ? '' : String(row[idxAssessoria]).trim();
+      const gestorRaw = idxGestorRaw >= 0 ? row[idxGestorRaw] : '';
+      // getGestorFriendlyName cobre os ~19 gestores da diretoria inteira (não só os 4 de Cauda
+      // Longa que CL_GESTORES_RAW conhecia) — resolve Camila/Lais/Wilder/Erika (Plataforma SP),
+      // Vivian/Guilherme/Izabele (ABC), Karollainny/Amanda/Daniela/Maxuel (Digital) também.
       let gestorLabel;
-      if (gestorRaw && CL_GESTORES_RAW[gestorRaw]) gestorLabel = CL_GESTORES_RAW[gestorRaw];
+      if (gestorRaw) gestorLabel = window.getGestorFriendlyName ? window.getGestorFriendlyName(gestorRaw) : gestorRaw;
       else if (enrich[codigo]) gestorLabel = enrich[codigo];
       else gestorLabel = 'Sem Gestor Atribuído';
 
-      const monthly = monthCols.map(c => num(row[c]));
+      const monthly = padFront(monthCols.map(c => num(row[c])));
       const mc = {
-        pf: monthCols.map(c => num(row[c-3])),
-        ss: monthCols.map(c => num(row[c-2])),
-        pme: monthCols.map(c => num(row[c-1])),
+        pf: padFront(monthCols.map(c => num(row[c-3]))),
+        ss: padFront(monthCols.map(c => num(row[c-2]))),
+        pme: padFront(monthCols.map(c => num(row[c-1]))),
       };
       const t1 = num(row[idxT1]), t2 = num(row[idxT2]);
       const meta = t1 * 1.10;              // meta do 2TRI26 — régua da época (×1,10)
@@ -5299,16 +5380,22 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
 
   function diffEligibilidade(newRecords){
     const old = window.getEligibilidadeData();
-    const oldCodes = new Set(old.map(d=>d.c));
+    // Compara só contra o retrato anterior DOS MESMOS GESTORES que aparecem neste arquivo — não
+    // contra a base inteira (todas as equipes). Sem isso, importar UMA equipe faz parecer que
+    // vai "remover" as outras inteiras (achado real no V1, 2026-09-17 — ver
+    // project_v1_v2_merge_in_progress na memória).
+    const newGestores = new Set(newRecords.map(d => d.g));
+    const oldScoped = old.filter(d => newGestores.has(d.g));
+    const oldCodes = new Set(oldScoped.map(d=>d.c));
     const newCodes = new Set(newRecords.map(d=>d.c));
     const added = newRecords.filter(d => !oldCodes.has(d.c));
-    const removed = old.filter(d => !newCodes.has(d.c));
-    const oldTotSum = old.reduce((s,d)=>s+d.tot,0);
+    const removed = oldScoped.filter(d => !newCodes.has(d.c));
+    const oldTotSum = oldScoped.reduce((s,d)=>s+d.tot,0);
     const newTotSum = newRecords.reduce((s,d)=>s+d.tot,0);
 
     let html = '<h3 style="font-size:14px;color:var(--navy);margin:14px 0 8px;"><i class=ic-target></i> Elegibilidade — Resumo das mudanças</h3>';
     html += '<div style="font-size:12.5px;line-height:1.8;">';
-    html += `<div>Corretoras: <b>${old.length}</b> → <b>${newRecords.length}</b> (${added.length} novas, ${removed.length} removidas)</div>`;
+    html += `<div>Corretoras destes gestores: <b>${oldScoped.length}</b> → <b>${newRecords.length}</b> (${added.length} novas, ${removed.length} removidas)</div>`;
     html += `<div>Total 17 meses (vidas): <b>${fmtN(oldTotSum)}</b> → <b>${fmtN(newTotSum)}</b></div>`;
     html += '</div>';
     if (added.length){
