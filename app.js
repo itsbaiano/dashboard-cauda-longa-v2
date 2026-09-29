@@ -906,13 +906,37 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     const statusKey = o => (o.field ? o.field+'::' : '') + o.value;
     const statusLabel = o => pendStatusKeyToLabel(statusKey(o));
 
+    // Quantas vezes cada status aparece no recorte atual — usada pra ordenar por relevância
+    // (mais frequente primeiro, dentro de cada esteira) e, no modo "todos os gestores", pra
+    // esconder valores que aparecem 1 única vez: amostragem real em 2026-09-29 mostrou que os
+    // 3 casos com exatamente 1 ocorrência tinham um ID de registro colado no próprio texto do
+    // status (ex. "INICIADO ANÁLISE:EC625813") — glitch de digitação na origem (Ditec/SIGO), não
+    // categoria real do funil. Com um gestor específico selecionado a lista já é curta, então
+    // não filtra nada ali — só no agregado de ~19 gestores é que esse ruído aparece.
+    const statusCounts = {};
+    list.flatMap(statusesOf).forEach(o => { const k = statusKey(o); statusCounts[k] = (statusCounts[k]||0) + 1; });
+
     const seenKeys = new Set();
     const statuses = [];
     list.flatMap(statusesOf).forEach(o => { const k = statusKey(o); if (!seenKeys.has(k)){ seenKeys.add(k); statuses.push(o); } });
-    statuses.sort((a,b) => statusLabel(a).localeCompare(statusLabel(b)));
     pendSelectedStatuses.forEach(k => { if (!seenKeys.has(k)) pendSelectedStatuses.delete(k); });
+
+    const FIELD_ORDER = ['planium','cadastro','ditec','bitix'];
+    const visibleStatuses = statuses
+      .filter(o => gestorNome || statusCounts[statusKey(o)] > 1)
+      .sort((a,b) => {
+        const fa = FIELD_ORDER.indexOf(a.field), fb = FIELD_ORDER.indexOf(b.field);
+        if (fa !== fb) return fa - fb;
+        return statusCounts[statusKey(b)] - statusCounts[statusKey(a)];
+      });
     const chipsWrap = document.getElementById('pendStatusChips');
-    chipsWrap.innerHTML = statuses.map(o => { const k = statusKey(o); return `<span class="status-chip${pendSelectedStatuses.has(k)?' active':''}" data-status="${k}">${statusLabel(o)}</span>`; }).join('');
+    let lastField;
+    chipsWrap.innerHTML = visibleStatuses.map(o => {
+      const k = statusKey(o);
+      const groupLabel = (o.field && o.field !== lastField) ? `<span class="status-chip-group">${PEND_STATUS_FIELD_LABELS[o.field]||o.field}</span>` : '';
+      lastField = o.field;
+      return groupLabel + `<span class="status-chip${pendSelectedStatuses.has(k)?' active':''}" data-status="${k}">${statusLabel(o)} <span class="status-chip-count">${statusCounts[k]}</span></span>`;
+    }).join('');
     chipsWrap.querySelectorAll('.status-chip').forEach(chip => {
       chip.addEventListener('click', () => {
         const k = chip.dataset.status;
