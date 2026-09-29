@@ -806,6 +806,16 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
   let pendCurrentGestor = null;
   let pendActiveTab = 'pme';
   let pendSelectedStatuses = new Set();
+  // Nome de exibição de cada "esteira" (campo de status.{campo}) — porta pro V2 o mesmo fix
+  // já aplicado no V1 (2026-09-29): "PENDENTE" (Ditec) e "pendencia" (Planium) pareciam
+  // duplicados nos chips, mas são esteiras diferentes.
+  const PEND_STATUS_FIELD_LABELS = {planium:'Planium', cadastro:'Cadastro', ditec:'Ditec', bitix:'Bitix'};
+  function pendStatusKeyToLabel(k){
+    const sep = k.indexOf('::');
+    if (sep < 0) return k;
+    const field = k.slice(0, sep), value = k.slice(sep+2);
+    return `${value} · ${PEND_STATUS_FIELD_LABELS[field]||field}`;
+  }
   // Guarda o resultado filtrado do último render — "Baixar relatório" usa exatamente o que
   // está na tela (gestor + mês + corretora + status já aplicados), sem recalcular nada.
   let pendLastPmeFiltered = [], pendLastPfFiltered = [];
@@ -823,7 +833,15 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
   // Não dá pra só comparar "friendly === gestorNome e parar por aí" (quando gestorNome já
   // vem bonito, tipo do Desempenho Comercial) — precisa varrer as chaves do dicionário e
   // achar quais delas convertem pro mesmo nome bonito, senão a variante crua fica de fora.
+  // gestorNome nulo/vazio = "todos os gestores" (pedido do Victor, 2026-09-29, "Consultar
+  // Funil"): reaproveita a mesma função pra cada gestor conhecido, marcando cada proposta
+  // com o dono dela (_gestor) — só usado quando a tela mostra todo mundo junto, pra render
+  // a coluna Gestor. Não muda em nada o caminho de UM gestor específico (abaixo, inalterado).
   function pendenciasDoGestor(dict, gestorNome, idField){
+    if (!gestorNome){
+      const friendlies = [...new Set(Object.keys(dict).map(k => window.getGestorFriendlyName ? window.getGestorFriendlyName(k) : k))].sort();
+      return friendlies.flatMap(f => pendenciasDoGestor(dict, f, idField).map(p => Object.assign({}, p, { _gestor: f })));
+    }
     const friendly = window.getGestorFriendlyName ? window.getGestorFriendlyName(gestorNome) : gestorNome;
     const chaves = Object.keys(dict).filter(k =>
       k === friendly || k === gestorNome ||
@@ -845,6 +863,20 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     document.getElementById('pendFilterLabel').textContent = pendActiveTab === 'pme' ? 'Filtrar por Data Vigência' : 'Filtrar por Data Status';
     document.getElementById('pendPropostaLabel').textContent = pendActiveTab === 'pme' ? 'Buscar por Nº da Proposta' : 'Buscar por Nº do Orçamento';
     document.getElementById('pendPropostaSearch').placeholder = pendActiveTab === 'pme' ? 'Ex.: 12345' : 'Ex.: 67890';
+    document.getElementById('pendModalGestor').textContent = gestorNome || 'Todas as equipes';
+
+    // "Consultar Funil" (pedido do Victor, 2026-09-29) — o dropdown de Gestor DENTRO do popup
+    // troca pendCurrentGestor e re-renderiza, igual mês/corretora já faziam; nulo = todos os
+    // gestores juntos. A coluna Gestor da tabela só aparece nesse caso (sozinho ela é óbvia/
+    // redundante — sempre a mesma pessoa).
+    const gestorSel = document.getElementById('pendGestorFilter');
+    if (document.activeElement !== gestorSel){
+      const todosGestores = [...new Set(Object.keys(Object.assign({}, PENDENCIAS_PME, PENDENCIAS_PF)).map(k => window.getGestorFriendlyName ? window.getGestorFriendlyName(k) : k))].sort();
+      gestorSel.innerHTML = '<option value="">Todos os gestores</option>' + todosGestores.map(g => `<option value="${g}"${g===gestorNome?' selected':''}>${g}</option>`).join('');
+    }
+    const showGestorCol = !gestorNome;
+    document.getElementById('pendGestorThPme').style.display = showGestorCol ? '' : 'none';
+    document.getElementById('pendGestorThPf').style.display = showGestorCol ? '' : 'none';
 
     const list = pendActiveTab === 'pme' ? pme : pf;
     const dateField = pendActiveTab === 'pme' ? 'dataVigencia' : 'dataStatus';
@@ -862,19 +894,29 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     corSel.value = corretoras.includes(prevCor) ? prevCor : '';
     const activeCorretora = corSel.value;
 
+    // Cada chip carrega o par {campo, valor} — dois status com o mesmo texto mas de campos
+    // diferentes (ex.: REANALISE no Ditec e no Bitix) viram chips distintos, nunca fundidos.
     const statusesOf = p => {
-      if (Array.isArray(p.status)) return p.status;
-      if (p.status && typeof p.status === 'object') return Object.values(p.status).filter(v=>v && v !== '0');
-      return p.status ? [p.status] : [];
+      if (Array.isArray(p.status)) return p.status.filter(v=>v && v!=='0').map(v => ({field:null, value:v}));
+      if (p.status && typeof p.status === 'object'){
+        return Object.entries(p.status).filter(([k,v])=>v && v!=='0').map(([field,value]) => ({field, value}));
+      }
+      return (p.status && p.status !== '0') ? [{field:null, value:p.status}] : [];
     };
-    const statuses = [...new Set(list.flatMap(statusesOf))].sort();
-    pendSelectedStatuses.forEach(s => { if (!statuses.includes(s)) pendSelectedStatuses.delete(s); });
+    const statusKey = o => (o.field ? o.field+'::' : '') + o.value;
+    const statusLabel = o => pendStatusKeyToLabel(statusKey(o));
+
+    const seenKeys = new Set();
+    const statuses = [];
+    list.flatMap(statusesOf).forEach(o => { const k = statusKey(o); if (!seenKeys.has(k)){ seenKeys.add(k); statuses.push(o); } });
+    statuses.sort((a,b) => statusLabel(a).localeCompare(statusLabel(b)));
+    pendSelectedStatuses.forEach(k => { if (!seenKeys.has(k)) pendSelectedStatuses.delete(k); });
     const chipsWrap = document.getElementById('pendStatusChips');
-    chipsWrap.innerHTML = statuses.map(s => `<span class="status-chip${pendSelectedStatuses.has(s)?' active':''}" data-status="${s}">${s}</span>`).join('');
+    chipsWrap.innerHTML = statuses.map(o => { const k = statusKey(o); return `<span class="status-chip${pendSelectedStatuses.has(k)?' active':''}" data-status="${k}">${statusLabel(o)}</span>`; }).join('');
     chipsWrap.querySelectorAll('.status-chip').forEach(chip => {
       chip.addEventListener('click', () => {
-        const s = chip.dataset.status;
-        if (pendSelectedStatuses.has(s)) pendSelectedStatuses.delete(s); else pendSelectedStatuses.add(s);
+        const k = chip.dataset.status;
+        if (pendSelectedStatuses.has(k)) pendSelectedStatuses.delete(k); else pendSelectedStatuses.add(k);
         renderPendencias();
       });
     });
@@ -885,15 +927,18 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     // pros dois: cada aba já sabe qual número procurar (dataVigencia/dataStatus segue o mesmo padrão).
     const searchRaw = document.getElementById('pendPropostaSearch').value.trim().toLowerCase();
 
-    const pmeFiltered = pme.filter(p => (!activeMonth || pendMonthOf(p.dataVigencia) === activeMonth) && (!activeCorretora || p.corretora === activeCorretora) && (pendActiveTab !== 'pme' || pendSelectedStatuses.size === 0 || statusesOf(p).some(s=>pendSelectedStatuses.has(s))) && (!searchRaw || String(p.proposta||'').toLowerCase().indexOf(searchRaw) >= 0))
+    const pmeFiltered = pme.filter(p => (!activeMonth || pendMonthOf(p.dataVigencia) === activeMonth) && (!activeCorretora || p.corretora === activeCorretora) && (pendActiveTab !== 'pme' || pendSelectedStatuses.size === 0 || statusesOf(p).some(o=>pendSelectedStatuses.has(statusKey(o)))) && (!searchRaw || String(p.proposta||'').toLowerCase().indexOf(searchRaw) >= 0))
       .sort((a,b) => pendSortDir * ((a.beneficiarios||0) - (b.beneficiarios||0)));
-    const pfFiltered = pf.filter(p => (!activeMonth || pendMonthOf(p.dataStatus) === activeMonth) && (!activeCorretora || p.corretora === activeCorretora) && (pendActiveTab !== 'pf' || pendSelectedStatuses.size === 0 || statusesOf(p).some(s=>pendSelectedStatuses.has(s))) && (!searchRaw || String(p.orcamento||'').toLowerCase().indexOf(searchRaw) >= 0))
+    const pfFiltered = pf.filter(p => (!activeMonth || pendMonthOf(p.dataStatus) === activeMonth) && (!activeCorretora || p.corretora === activeCorretora) && (pendActiveTab !== 'pf' || pendSelectedStatuses.size === 0 || statusesOf(p).some(o=>pendSelectedStatuses.has(statusKey(o)))) && (!searchRaw || String(p.orcamento||'').toLowerCase().indexOf(searchRaw) >= 0))
       .sort((a,b) => pendSortDir * ((a.vidas||0) - (b.vidas||0)));
     pendLastPmeFiltered = pmeFiltered;
     pendLastPfFiltered = pfFiltered;
-    document.getElementById('pendPdfBtn').disabled = pendActiveTab === 'pme' ? !pmeFiltered.length : !pfFiltered.length;
+    // "Baixar relatório" continua exigindo UM gestor específico (ver comentário em
+    // pendGerarPDF) — em "todos os gestores" fica desabilitado, não só sem fazer nada ao clicar.
+    document.getElementById('pendPdfBtn').disabled = !gestorNome || (pendActiveTab === 'pme' ? !pmeFiltered.length : !pfFiltered.length);
     document.getElementById('pendPdfBtn').style.opacity = document.getElementById('pendPdfBtn').disabled ? '.5' : '';
     document.getElementById('pendPdfBtn').style.cursor = document.getElementById('pendPdfBtn').disabled ? 'default' : 'pointer';
+    document.getElementById('pendPdfBtn').title = gestorNome ? '' : 'Selecione um gestor específico pra baixar o relatório';
 
     document.getElementById('pendCountPme').textContent = pmeFiltered.reduce((s,p)=>s+(p.beneficiarios||0),0);
     document.getElementById('pendCountPf').textContent = pfFiltered.reduce((s,p)=>s+(p.vidas||0),0);
@@ -902,14 +947,14 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
       : pfFiltered.reduce((s,p)=>s+(p.vidas||0),0);
     document.getElementById('pendBeneficiariosTotal').textContent = `Total de beneficiários (filtro atual): ${beneficiariosTotal}`;
     document.getElementById('pendPmeBody').innerHTML = pmeFiltered.length ? pmeFiltered.map(p => `
-      <tr><td>${p.proposta}</td><td class="name">${p.corretora}</td><td>
+      <tr><td>${p.proposta}</td><td class="name">${p.corretora}</td>${showGestorCol?`<td>${p._gestor||''}</td>`:''}<td>
         ${p.status.planium ? `<span class="tag ${p.status.planium==='pendencia'?'react':'noelig'}">${p.status.planium}</span>` : ''}
         <div style="font-size:10.5px; color:var(--muted); margin-top:4px; line-height:1.6;">${['cadastro','ditec','bitix'].filter(k=>p.status[k] && p.status[k]!=='0').map(k=>`${k.charAt(0).toUpperCase()+k.slice(1)}: <b>${p.status[k]}</b>`).join(' · ')}</div>
       </td><td class="num">${p.beneficiarios}</td><td>${p.dataReceb}</td><td>${p.dataVigencia}</td></tr>
-    `).join('') : `<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:16px;">Nenhuma pendência PME/SS para este filtro.</td></tr>`;
+    `).join('') : `<tr><td colspan="${showGestorCol?7:6}" style="text-align:center;color:var(--muted);padding:16px;">Nenhuma pendência PME/SS para este filtro.</td></tr>`;
     document.getElementById('pendPfBody').innerHTML = pfFiltered.length ? pfFiltered.map(p => `
-      <tr><td>${p.orcamento}</td><td class="name">${p.corretora}</td><td><span class="tag react">${p.status}</span></td><td class="num">${p.vidas}</td><td>${p.dataStatus}</td></tr>
-    `).join('') : `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:16px;">Nenhuma pendência PF para este filtro.</td></tr>`;
+      <tr><td>${p.orcamento}</td><td class="name">${p.corretora}</td>${showGestorCol?`<td>${p._gestor||''}</td>`:''}<td><span class="tag react">${p.status}</span></td><td class="num">${p.vidas}</td><td>${p.dataStatus}</td></tr>
+    `).join('') : `<tr><td colspan="${showGestorCol?6:5}" style="text-align:center;color:var(--muted);padding:16px;">Nenhuma pendência PF para este filtro.</td></tr>`;
   }
 
   window.showPendenciasModal = function(gestorNome){
@@ -917,9 +962,9 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     // quanto o nome cru da planilha (ex.: "PABLO SERGIO RIBEIRO AMORA", como a aba Conversão
     // usa, vindo do PLANIUM) — quem normaliza/junta as duas variantes é pendenciasDoGestor(),
     // chamada dentro de renderPendencias(), então aqui só guarda o que veio mesmo.
-    pendCurrentGestor = gestorNome;
+    pendCurrentGestor = gestorNome || null;
     pendActiveTab = 'pme';
-    document.getElementById('pendModalGestor').textContent = gestorNome;
+    document.getElementById('pendModalGestor').textContent = gestorNome || 'Todas as equipes';
     document.getElementById('pendTabPme').classList.add('active');
     document.getElementById('pendTabPf').classList.remove('active');
     document.getElementById('pendPmeSection').style.display = '';
@@ -937,6 +982,22 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
   document.getElementById('pendMonthFilter').addEventListener('change', renderPendencias);
   document.getElementById('pendCorretoraFilter').addEventListener('change', renderPendencias);
   document.getElementById('pendPropostaSearch').addEventListener('input', renderPendencias);
+  // Troca o gestor SEM fechar o popup — pedido do Victor, 2026-09-29 ("Consultar Funil"):
+  // dropdown vazio = todos os gestores juntos, mesma variável que já controlava tudo o resto.
+  document.getElementById('pendGestorFilter').addEventListener('change', (e) => {
+    pendCurrentGestor = e.target.value || null;
+    document.getElementById('pendModalGestor').textContent = pendCurrentGestor || 'Todas as equipes';
+    document.getElementById('pendMonthFilter').value = '';
+    document.getElementById('pendCorretoraFilter').value = '';
+    pendSelectedStatuses.clear();
+    renderPendencias();
+  });
+  // Botão "Consultar Funil" do Resumo do Dia — abre o mesmo popup de Pendências, só que sem
+  // gestor pré-selecionado (todo mundo junto), com o filtro de gestor já disponível lá dentro.
+  document.getElementById('btnConsultarFunil').addEventListener('click', () => {
+    document.getElementById('resumoModalOverlay').style.display = 'none';
+    window.showPendenciasModal(null);
+  });
 
   // "Baixar relatório" — mesmo padrão de PDF-via-HTML do Ranking (rkmGerarPDF, removido em
   // 2026-09-04: casava por nome de corretora entre extrato de vendas e funil, o que não é

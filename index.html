@@ -1687,6 +1687,10 @@ window.__IS_LOCAL_TEST__ = window.location.hostname === '' || /^(localhost|127\.
       </div>
       <div style="display:flex; gap:14px; flex-wrap:wrap; margin-top:12px;">
         <div class="f-group" style="max-width:260px;">
+          <label>Filtrar por Gestor</label>
+          <select id="pendGestorFilter" class="ic-left ic-user"><option value="">Todos os gestores</option></select>
+        </div>
+        <div class="f-group" style="max-width:260px;">
           <label id="pendFilterLabel">Filtrar por Data Vigência</label>
           <select id="pendMonthFilter" class="ic-left ic-clock"><option value="">Todos os meses</option></select>
         </div>
@@ -1710,7 +1714,7 @@ window.__IS_LOCAL_TEST__ = window.location.hostname === '' || /^(localhost|127\.
       <div id="pendPmeSection">
         <div class="table-wrap pend-scroll" style="margin-top:12px;">
           <table>
-            <thead><tr><th>Proposta</th><th>Corretora</th><th>Status</th><th class="num sorted" data-dir="desc" data-k="beneficiarios">Beneficiários</th><th>Recebimento</th><th>Vigência</th></tr></thead>
+            <thead><tr><th>Proposta</th><th>Corretora</th><th id="pendGestorThPme" style="display:none;">Gestor</th><th>Status</th><th class="num sorted" data-dir="desc" data-k="beneficiarios">Beneficiários</th><th>Recebimento</th><th>Vigência</th></tr></thead>
             <tbody id="pendPmeBody"></tbody>
           </table>
         </div>
@@ -1718,7 +1722,7 @@ window.__IS_LOCAL_TEST__ = window.location.hostname === '' || /^(localhost|127\.
       <div id="pendPfSection" style="display:none;">
         <div class="table-wrap pend-scroll" style="margin-top:12px;">
           <table>
-            <thead><tr><th>Orçamento</th><th>Corretora</th><th>Status</th><th class="num sorted" data-dir="desc" data-k="vidas">Vidas</th><th>Data Status</th></tr></thead>
+            <thead><tr><th>Orçamento</th><th>Corretora</th><th id="pendGestorThPf" style="display:none;">Gestor</th><th>Status</th><th class="num sorted" data-dir="desc" data-k="vidas">Vidas</th><th>Data Status</th></tr></thead>
             <tbody id="pendPfBody"></tbody>
           </table>
         </div>
@@ -1735,6 +1739,13 @@ window.__IS_LOCAL_TEST__ = window.location.hostname === '' || /^(localhost|127\.
         </div>
         <button id="btnCloseResumo" class="btn-reset">Fechar ✕</button>
       </div>
+      <button id="btnConsultarFunil" class="btn-reset" style="margin-top:14px; width:100%; display:flex; align-items:center; gap:10px; text-align:left; padding:12px 16px; background:rgba(22,184,122,.08); border:1.5px solid var(--green); border-radius:10px;">
+        <span style="width:30px; height:30px; border-radius:8px; background:var(--green); display:flex; align-items:center; justify-content:center; flex-shrink:0;"><i class=ic-check style="color:#fff;"></i></span>
+        <span style="display:flex; flex-direction:column; gap:1px;">
+          <span style="font-size:13px; font-weight:800; color:var(--navy);">Consultar Funil</span>
+          <span style="font-size:11px; color:var(--muted); font-weight:400;">Todas as equipes juntas, com filtro de gestor lá dentro</span>
+        </span>
+      </button>
       <div style="display:flex; gap:10px; margin-top:16px; flex-wrap:wrap; align-items:flex-end;">
         <div class="f-group" style="flex:1; min-width:180px;">
           <label>Equipe</label>
