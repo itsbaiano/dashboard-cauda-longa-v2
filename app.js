@@ -556,6 +556,9 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
       btn.addEventListener('click', () => { corrTabsEl.querySelectorAll('.subtab-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); renderCorretoras(btn.dataset.g); });
     });
     if (defaultCorretorasGestor) renderCorretoras(defaultCorretorasGestor);
+    // Visão por trimestre (módulo "Metas por executivo", no fim deste arquivo) reage a cada render
+    // daqui — ver window.__mjAfterRender lá.
+    if (window.__mjAfterRender) window.__mjAfterRender();
   }
 
   document.getElementById('mjResetTeam').addEventListener('click', () => {
@@ -655,6 +658,11 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     const teams = (month && MJ_TEAMS_BY_MONTH[month]) ? MJ_TEAMS_BY_MONTH[month] : MJ_TEAMS;
     return { teams, benchmark: MJ_BENCHMARK, corretoras: getCorretoras(month), naoAtribuido: getNaoAtribuido(month) };
   };
+  // Estrito: devolve os times de UM mês só se esse mês realmente foi importado (null senão).
+  // getMetaJunhoData(month) acima cai no mês ao vivo quando o mês pedido não existe — certo pra
+  // as telas de mês único, errado pra somar trimestre (somaria o mês atual no lugar do ausente).
+  window.getMetaJunhoTeamsStrict = function(month){ return MJ_TEAMS_BY_MONTH[month] || null; };
+  window.getMjCurrentTeam = function(){ return currentTeam; };
   window.updateMetaJunhoData = function(newData){
     // Grava sempre no mês que a planilha realmente representa (detectedMonth),
     // não sempre em "currentMonth" — senão um arquivo de mês passado sobrescreveria
@@ -5903,6 +5911,9 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     return { byGestor, semGestorCount, semGestorVidas, semGestorCat, hasCarteira: !!carteira };
   }
 
+  // Usado pelo módulo "Metas por executivo" pra ler extratos Corretoras de MESES PASSADOS sem
+  // passar por updateIntegradoFromRaw (que sempre grava no mês corrente).
+  window.parseCorretorasRawWorkbook = parseCorretorasRawWorkbook;
   // Achata o resultado de parseCorretorasRawWorkbook pro formato que updateRankingData
   // espera — assim o upload do extrato bruto (sem o arquivo "NDI SP - Por Gestor" inteiro)
   // também atualiza o Ranking de Vendas, não só Desempenho Comercial/Elegibilidade. Antes
@@ -6744,6 +6755,8 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
       SLA_HISTORICO: window.getSlaHistorico ? window.getSlaHistorico() : [],
       DAILY_SNAPSHOTS: window.getDailySnapshots ? window.getDailySnapshots() : {},
       CONV_ONTEM_HOJE: window.getConvOntemHoje ? window.getConvOntemHoje() : {},
+      META_EXEC_BY_MONTH: window.getMetaExecData ? window.getMetaExecData() : {},
+      INT_EXEC_BY_MONTH: window.getIntExecData ? window.getIntExecData() : {},
       RANK_CUR_LABEL: window.getRankLabels ? window.getRankLabels().cur : 'Mês atual',
       RANK_PREV_LABEL: window.getRankLabels ? window.getRankLabels().prev : 'Mês anterior',
       CARTEIRA_MAP: window.CARTEIRA_MAP || null,
@@ -6764,11 +6777,22 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     status.innerHTML = '<span class="spinner" style="border-color:rgba(16,30,99,.25); border-top-color:var(--navy);"></span> Publicando...';
     try {
       const payload = buildDataPayload();
-      const keys = Object.keys(payload);
+      // META_EXEC_BY_MONTH (metas por executivo, 2026-10-02) é opcional: só grava se houver algo
+      // importado, e uma falha nela (ex.: regra do Firestore ainda sem essa seção) vira aviso,
+      // nunca derruba a publicação das seções que já funcionavam.
+      const optionalKeys = ['META_EXEC_BY_MONTH', 'INT_EXEC_BY_MONTH'];
+      const keys = Object.keys(payload).filter(k => optionalKeys.indexOf(k) < 0);
       // Publica todas as seções em paralelo — mais rápido, e cada uma é independente
       // (um erro numa não corrompe as outras, viram gravações parciais no pior caso).
       await Promise.all(keys.map(k => window.fsWriteSection(k, payload[k])));
-      status.innerHTML = '<span style="color:#1b7a63; font-weight:700;">Publicado! Quem já estiver com o painel aberto vê a atualização só no próximo login/recarregamento.</span>';
+      let avisoMeta = '';
+      const rotulos = { META_EXEC_BY_MONTH:'as metas por executivo', INT_EXEC_BY_MONTH:'o Integrado de meses passados' };
+      for (const k of optionalKeys){
+        if (!payload[k] || !Object.keys(payload[k]).length) continue;
+        try { await window.fsWriteSection(k, payload[k]); }
+        catch(e){ avisoMeta += ' <span style="color:var(--red); font-weight:600;">Atenção: ' + rotulos[k] + ' importado(s) NÃO foi(ram) salvo(s) (' + e.message + ').</span>'; }
+      }
+      status.innerHTML = '<span style="color:#1b7a63; font-weight:700;">Publicado! Quem já estiver com o painel aberto vê a atualização só no próximo login/recarregamento.</span>' + avisoMeta;
     } catch(err){
       const permMsg = (err.code === 'permission-denied')
         ? ' Seu usuário pode não estar marcado como admin na allowlist do Firestore — confira com quem administra o painel.'
@@ -6790,5 +6814,407 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     setTimeout(()=>URL.revokeObjectURL(a.href), 8000);
   });
   window.__buildDataJson = buildDataJson;
+})();
+
+/* =========================================================
+   METAS POR EXECUTIVO + VISÃO POR TRIMESTRE (Desempenho Comercial)
+   Pedido do sênior via Victor, 2026-10-02: ver os números dos EXECUTIVOS (Meta x Integrado)
+   por trimestre fechado (1T/2T/3T...), não só mês a mês — e não a Elegibilidade.
+
+   Fontes (combinado com Victor):
+   - META: planilhas "META VAREJO 2026" (1 arquivo por trimestre, 1 aba por mês, equipe →
+     executivo, colunas IND/SS/PME/ADESÃO/TOTAL). Só as metas são usadas desses arquivos.
+     ADESÃO = ADM (mesma categoria, nome diferente). O 1º tri (Jan/Fev/Mar) não tem arquivo —
+     veio de prints, digitado à mão e conferido contra os totais de cada equipe (META_EXEC_SEED).
+   - INTEGRADO: continua vindo do import normal do Extrato do BI (MJ_TEAMS_BY_MONTH), casado
+     por nome. Mês sem import = sem Integrado (a tela mostra "—", nunca zero inventado).
+   Regras (Victor): Interior fora (aqui = equipes dos gerentes sênior Maria Aparecida Cabral e
+   Leonardo Galerani — a da Cabral aparece DENTRO da seção "SP HAP NDI" nos arquivos de
+   2º/3º tri, por isso exclui por nome, não só pela seção "SP INTERIOR"). Executivo fica na
+   equipe em que estava em cada mês/trimestre — trocas ao longo do ano não são reescritas.
+   ========================================================= */
+(function(){
+  const norm = s => String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+  const MES_PT = {JANEIRO:'01',FEVEREIRO:'02',MARCO:'03',ABRIL:'04',MAIO:'05',JUNHO:'06',JULHO:'07',AGOSTO:'08',SETEMBRO:'09',OUTUBRO:'10',NOVEMBRO:'11',DEZEMBRO:'12'};
+  const MES_CURTO = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  const MES_LONGO = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  // Mesmos rótulos de equipe que o resto do painel usa (SENIOR_TEAM_LABELS no import) — a ordem
+  // aqui é a ordem em que as equipes aparecem na tabela.
+  const SENIOR_LABELS = [
+    ['FOIADELLI', 'Camila Foiadelli (Plataforma)'],
+    ['MARIANO',   'Leonardo Mariano (ABC)'],
+    ['CARDOSO',   'Estevão Cardoso (Cauda Longa)'],
+    ['MARCELO',   'Marcelo Lima (Digital)'],
+  ];
+  const SENIOR_EXCLUIDOS = ['CABRAL', 'GALERANI'];
+  const NOME_BONITO = {
+    'AGATHA SAKAMOTO':'Agatha Sakamoto', 'AGATHA EIKO RODRIGUES SAKAMOTO':'Agatha Sakamoto', 'PATRICIA PESSOA MONKS':'Patricia Monks',
+    'JONATHAN LEAL DOS SANTOS SILVA':'Jonathan Leal', 'PABLO SERGIO RIBEIRO AMORA':'Pablo Amora',
+  };
+  const CONECT = new Set(['de','da','do','das','dos','e']);
+  const titulo = raw => String(raw).trim().split(/\s+/).map(w => { const l = w.toLowerCase(); return CONECT.has(l) ? l : l.charAt(0).toUpperCase() + l.slice(1); }).join(' ');
+  const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
+  const fmt0 = n => Math.round(n).toLocaleString('pt-BR');
+  const pct1 = n => (n * 100).toLocaleString('pt-BR', {minimumFractionDigits:1, maximumFractionDigits:1}) + '%';
+
+  function lev(a, b){
+    if (a === b) return 0;
+    const m = a.length, n = b.length;
+    if (!m) return n; if (!n) return m;
+    let prev = Array.from({length:n+1}, (_, j) => j);
+    for (let i = 1; i <= m; i++){
+      const cur = [i];
+      for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j-1] + 1, prev[j-1] + (a[i-1] === b[j-1] ? 0 : 1));
+      prev = cur;
+    }
+    return prev[n];
+  }
+
+  // ---------- parser da planilha "META VAREJO" ----------
+  function parseMetaExecWorkbook(wb){
+    const avisos = [];
+    const months = {};
+    let year = null;
+    const geral = wb.SheetNames.find(n => norm(n) === 'TRI GERAL');
+    if (geral){
+      const g = XLSX.utils.sheet_to_json(wb.Sheets[geral], {header:1, defval:null});
+      const m = /(\d{4})/.exec(String((g[0] && g[0][0]) || ''));
+      if (m) year = m[1];
+    }
+    if (!year) year = String(new Date().getFullYear());
+    wb.SheetNames.forEach(sheetName => {
+      const mm = MES_PT[norm(sheetName)];
+      if (!mm) return;
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], {header:1, defval:null});
+      const teams = {};
+      let section = 'ndi', team = null;
+      rows.forEach(row => {
+        const a = row[0] == null ? '' : String(row[0]).trim();
+        const b = row[1] == null ? '' : String(row[1]).trim();
+        const an = norm(a), bn = norm(b);
+        if (an === 'SP INTERIOR'){ section = 'int'; team = null; return; }
+        if (an === 'SP HAP NDI'){ section = 'ndi'; team = null; return; }
+        if (bn === 'GERENTE SENIOR'){
+          team = null;
+          if (section !== 'ndi') return;
+          if (SENIOR_EXCLUIDOS.some(k => an.indexOf(k) >= 0)) return;
+          const hit = SENIOR_LABELS.find(([k]) => an.indexOf(k) >= 0);
+          if (hit) team = hit[1];
+          else {
+            team = titulo(a.replace(/^GERENTE SENIOR:?\s*/i, ''));
+            avisos.push(`Gerente sênior não reconhecido em ${sheetName}: "${a}" — entrou como equipe nova "${team}". Se for Interior, avise.`);
+          }
+          return;
+        }
+        if (!team || !a || !bn) return;
+        if (bn.indexOf('DIRETORA') === 0){ team = null; return; }
+        const an2 = norm(a.replace(/\s+-\s+.*$/, ''));
+        if (!an2 || an2.indexOf('A CONTRATAR') === 0 || an2 === 'TBA') return; // vaga em aberto, sem pessoa
+        const nome = NOME_BONITO[an2] || titulo(a.replace(/\s+-\s+.*$/, ''));
+        const rec = { nome, ind:r2(row[2]), ss:r2(row[3]), pme:r2(row[4]), adm:r2(row[5]), total:r2(row[6]) };
+        const list = teams[team] = teams[team] || [];
+        const dup = list.find(x => norm(x.nome) === norm(nome));
+        if (dup){ ['ind','ss','pme','adm','total'].forEach(k => { dup[k] = r2(dup[k] + rec[k]); }); }
+        else list.push(rec);
+      });
+      if (Object.keys(teams).length) months[year + '-' + mm] = teams;
+    });
+    if (!Object.keys(months).length) throw new Error('Não achei abas de mês (Janeiro, Fevereiro...) com equipes "GERENTE SENIOR" nesse arquivo.');
+    return { months, avisos };
+  }
+
+  // ---------- dados ----------
+  let META_EXEC_BY_MONTH = window.__DASH_DATA__.META_EXEC_BY_MONTH || {};
+  // Integrado por executivo de MESES PASSADOS que nunca passaram pelo import normal (Jan–Mai/26),
+  // vindo dos extratos "Corretoras" de cada mês + Carteira atual. { 'AAAA-MM': { nome: {ind,ss,pme,adm,total} } }
+  // Só vale quando o mês NÃO existe em MJ_TEAMS_BY_MONTH (o import oficial sempre ganha).
+  let INT_EXEC_BY_MONTH = window.__DASH_DATA__.INT_EXEC_BY_MONTH || {};
+  window.getIntExecData = () => INT_EXEC_BY_MONTH;
+  // Meses entregues junto com o código (1º tri digitado dos prints; 2º/3º tri lidos dos arquivos
+  // reais). Um import novo do mesmo mês (META_EXEC_BY_MONTH) sempre vale mais que o seed.
+  // Formato compacto [nome, IND, SS, PME, ADM, TOTAL] por executivo — expandido logo abaixo.
+  // 2026-01..03: digitado dos prints (Izabele = linhas ABC + BX somadas; equipe da Cida/Interior
+  // fora). 2026-04..09: lido pelo parser acima dos arquivos reais "2º TRI (2)" e "3º TRI (1)".
+  const META_EXEC_SEED = (function(){
+    const c = {"2026-01":{"Camila Foiadelli (Plataforma)":[["Wilder Coca Patzi",498,811,147,30,1487],["Patricia Monks",498,811,147,30,1487],["Camila Alves Pertinhez",644,1048,190,38,1920],["Erika de Sousa Silva",436,710,129,26,1301]],"Leonardo Mariano (ABC)":[["Izabele de Oliveira da Silva",727,1183,215,43,2168],["Vivian de Cassia Ambrosio",888,1446,262,53,2650]],"Estevão Cardoso (Cauda Longa)":[["Agatha Sakamoto",239,389,71,14,712],["Lais dos Santos Martins",228,372,67,14,682],["Jonathan Leal",291,473,86,17,867],["Pablo Amora",280,456,83,17,836]],"Marcelo Lima (Digital)":[["Karollainny Rangel de Sousa Lopes",138,225,41,8,413],["Daniela Frederico Martins",150,244,44,9,447],["Daniela Novais dos Santos",138,225,41,9,413],["Guilherme de Lima Musachi",150,244,44,9,447]]},"2026-02":{"Camila Foiadelli (Plataforma)":[["Wilder Coca Patzi",501,817,148,30,1496],["Patricia Monks",501,817,148,29,1495],["Camila Alves Pertinhez",648,1055,191,39,1933],["Erika de Sousa Silva",439,715,130,26,1310]],"Leonardo Mariano (ABC)":[["Izabele de Oliveira da Silva",720,1173,348,43,2284],["Vivian de Cassia Ambrosio",692,1127,158,41,2018]],"Estevão Cardoso (Cauda Longa)":[["Agatha Sakamoto",260,423,77,15,775],["Lais dos Santos Martins",248,405,73,15,741],["Jonathan Leal",316,515,93,19,943],["Pablo Amora",305,497,90,19,911]],"Marcelo Lima (Digital)":[["Karollainny Rangel de Sousa Lopes",136,221,40,8,405],["Daniela Frederico Martins",147,239,43,9,438],["Daniela Novais dos Santos",136,221,40,9,405],["Guilherme de Lima Musachi",147,239,43,9,438]]},"2026-03":{"Camila Foiadelli (Plataforma)":[["Wilder Coca Patzi",499,793,147,29,1468],["Patricia Monks",499,793,147,29,1468],["Camila Alves Pertinhez",645,1024,190,38,1897],["Erika de Sousa Silva",437,694,128,26,1285]],"Leonardo Mariano (ABC)":[["Izabele de Oliveira da Silva",717,1138,211,42,2108],["Vivian de Cassia Ambrosio",689,1094,202,41,2026]],"Estevão Cardoso (Cauda Longa)":[["Agatha Sakamoto",259,411,76,15,761],["Lais dos Santos Martins",247,393,89,15,744],["Jonathan Leal",304,500,73,18,895],["Pablo Amora",315,482,76,19,892]],"Marcelo Lima (Digital)":[["Karollainny Rangel de Sousa Lopes",135,214,40,8,397],["Amanda dos Santos Sobral",146,232,43,9,430],["Daniela Novais dos Santos",135,214,40,9,397],["Guilherme de Lima Musachi",146,232,43,9,430]]},"2026-04":{"Camila Foiadelli (Plataforma)":[["Camila Alves Pertinhez",827.45,1314.18,243.37,48.67,2433.67],["Erika de Sousa Silva",469.63,745.89,138.13,27.63,1381.27],["Wilder Coca Patzi",514.36,816.92,151.28,30.26,1512.82],["Lais dos Santos Martins",424.91,674.85,124.97,24.99,1249.72]],"Leonardo Mariano (ABC)":[["Vivian de Cassia Ambrosio",649.75,1031.95,191.1,38.22,1911.03],["Izabele de Oliveira da Silva",664.86,1055.95,195.55,39.11,1955.47],["Guilherme de Lima Musachi",196.44,311.99,57.78,11.56,577.75]],"Estevão Cardoso (Cauda Longa)":[["Jonathan Leal",326.39,518.38,96,19.2,959.96],["Pablo Amora",290.12,460.78,85.33,17.07,853.3],["Patricia Monks",302.21,479.98,88.89,17.78,888.85],["Agatha Sakamoto",290.12,460.78,85.33,17.07,853.3]],"Marcelo Lima (Digital)":[["Amanda dos Santos Sobral",84.62,134.39,24.89,4.98,248.88],["Daniela Novais dos Santos",247.81,393.58,72.89,14.58,728.86],["Karollanny Rangel de Sousa Lopes",187.37,297.59,55.11,11.02,551.09],["Maxuel",84.62,134.39,24.89,4.98,248.88]]},"2026-05":{"Camila Foiadelli (Plataforma)":[["Camila Alves Pertinhez",834.9,1326.01,245.56,49.11,2455.58],["Erika de Sousa Silva",473.86,752.6,139.37,27.87,1393.7],["Wilder Coca Patzi",518.99,824.28,152.64,30.53,1526.44],["Patricia Monks",428.73,680.92,126.1,25.22,1260.97]],"Leonardo Mariano (ABC)":[["Vivian de Cassia Ambrosio",655.6,1041.24,192.82,38.56,1928.23],["Izabele de Oliveira da Silva",670.84,1065.46,197.31,39.46,1973.07],["Guilherme de Lima Musachi",198.2,314.79,58.3,11.66,582.95]],"Estevão Cardoso (Cauda Longa)":[["Jonathan Leal",329.32,523.04,96.86,19.37,968.6],["Pablo Amora",292.73,464.93,86.1,17.22,860.98],["Lais dos Santos Martins",304.93,484.3,89.69,17.94,896.85],["Agatha Sakamoto",292.73,464.93,86.1,17.22,860.98]],"Marcelo Lima (Digital)":[["Amanda dos Santos Sobral",85.38,135.6,25.11,5.02,251.12],["Daniela Novais dos Santos",250.04,397.13,73.54,14.71,735.42],["Karollanny Rangel de Sousa Lopes",189.06,300.27,55.6,11.12,556.05],["Maxuel",85.38,135.6,25.11,5.02,251.12]]},"2026-06":{"Camila Foiadelli (Plataforma)":[["Camila Alves Pertinhez",909.93,1445.18,267.63,53.53,2676.26],["Erika de Sousa Silva",516.45,820.24,151.9,30.38,1518.96],["Wilder Coca Patzi",565.63,898.35,166.36,33.27,1663.62],["Lais dos Santos Martins",467.26,742.12,137.43,27.49,1374.29]],"Leonardo Mariano (ABC)":[["Vivian de Cassia Ambrosio",697.9,1108.43,205.26,41.05,2052.64],["Izabele de Oliveira da Silva",780.98,1240.38,229.7,45.94,2297.01],["Guilherme de Lima Musachi",182.78,290.3,53.76,10.75,537.6]],"Estevão Cardoso (Cauda Longa)":[["Jonathan Leal",358.92,570.05,105.56,21.11,1055.65],["Pablo Amora",319.04,506.71,93.84,18.77,938.35],["Patricia Monks",332.33,527.82,97.75,19.55,977.45],["Agatha Sakamoto",319.04,506.71,93.84,18.77,938.35]],"Marcelo Lima (Digital)":[["Amanda dos Santos Sobral",93.05,147.79,27.37,5.47,273.69],["Daniela Novais dos Santos",272.51,432.81,80.15,16.03,801.51],["Karollainny Rangel de Sousa Lopes",206.05,327.25,60.6,12.12,606.02],["Maxuel Pimentel Nobrega",93.05,147.79,27.37,5.47,273.69]]},"2026-07":{"Camila Foiadelli (Plataforma)":[["Camila Alves Pertinhez",904.61,1436.73,266.06,53.21,2660.6],["Erika de Sousa Silva",487.1,773.62,143.26,28.65,1432.63],["Wilder Coca Patzi",440.71,699.94,129.62,25.92,1296.19],["Lais dos Santos Martins",487.1,773.62,143.26,28.65,1432.63]],"Leonardo Mariano (ABC)":[["Vivian de Cassia Ambrosio",673.91,1070.33,198.21,39.64,1982.09],["Izabele de Oliveira da Silva",689.58,1095.22,202.82,40.56,2028.18],["Guilherme de Lima Musachi",203.74,323.59,59.92,11.98,599.24]],"Estevão Cardoso (Cauda Longa)":[["Jonathan Leal",325.98,517.74,95.88,19.18,958.78],["Pablo Amora",313.45,497.83,92.19,18.44,921.9],["Patricia Monks",288.37,458,84.81,16.96,848.15],["Agatha Sakamoto",325.98,517.74,95.88,19.18,958.78]],"Marcelo Lima (Digital)":[["Amanda dos Santos Sobral",87.76,139.39,25.81,5.16,258.13],["Daniela Novais dos Santos",238.22,378.35,70.06,14.01,700.64],["Karollanny Rangel de Sousa Lopes",213.14,338.52,62.69,12.54,626.89],["Maxuel Pimentel Nobrega",87.76,139.39,25.81,5.16,258.13]]},"2026-08":{"Camila Foiadelli (Plataforma)":[["Camila Alves Pertinhez",876.84,1392.62,257.89,51.58,2578.93],["Erika de Sousa Silva",472.14,749.87,138.87,27.77,1388.65],["Wilder Coca Patzi",427.18,678.46,125.64,25.13,1256.4],["Lais dos Santos Martins",472.14,749.87,138.87,27.77,1388.65]],"Leonardo Mariano (ABC)":[["Vivian de Cassia Ambrosio",653.22,1037.47,192.12,38.42,1921.24],["Izabele de Oliveira da Silva",668.41,1061.6,196.59,39.32,1965.92],["Guilherme de Lima Musachi",197.49,313.65,58.08,11.62,580.84]],"Estevão Cardoso (Cauda Longa)":[["Jonathan Leal",315.98,501.85,92.93,18.59,929.34],["Pablo Amora",303.82,482.54,89.36,17.87,893.6],["Patricia Monks",279.52,443.94,82.21,16.44,822.11],["Agatha Sakamoto",315.98,501.85,92.93,18.59,929.34]],"Marcelo Lima (Digital)":[["Amanda dos Santos Sobral",85.07,135.11,25.02,5,250.21],["Daniela Novais dos Santos",230.91,366.73,67.91,13.58,679.14],["Karollainny Rangel de Sousa Lopes",206.6,328.13,60.76,12.15,607.65],["Maxuel Pimentel Nobrega",85.07,135.11,25.02,5,250.21]]},"2026-09":{"Camila Foiadelli (Plataforma)":[["Camila Alves Pertinhez",851.57,1352.49,250.46,50.09,2504.62],["Erika de Sousa Silva",458.54,728.27,134.86,26.97,1348.64],["Wilder Coca Patzi",414.87,658.91,122.02,24.4,1220.2],["Lais dos Santos Martins",458.54,728.27,134.86,26.97,1348.64]],"Leonardo Mariano (ABC)":[["Vivian de Cassia Ambrosio",634.4,1007.57,186.59,37.32,1865.88],["Izabele de Oliveira da Silva",649.15,1031.01,190.93,38.19,1909.27],["Guilherme de Lima Musachi",191.79,304.62,56.41,11.28,564.1]],"Estevão Cardoso (Cauda Longa)":[["Jonathan Leal",306.87,487.38,90.26,18.05,902.56],["Pablo Amora",295.07,468.64,86.79,17.36,867.85],["Patricia Monks",271.46,431.15,79.84,15.97,798.42],["Agatha Sakamoto",306.87,487.38,90.26,18.05,902.56]],"Marcelo Lima (Digital)":[["Amanda dos Santos Sobral",82.62,131.22,24.3,4.86,243],["Daniela Novais dos Santos",224.25,356.17,65.96,13.19,659.57],["Karollanny Rangel de Sousa Lopes",200.65,318.67,59.01,11.8,590.14],["Maxuel Pimentel Nobrega",82.62,131.22,24.3,4.86,243]]}};
+    const out = {};
+    Object.entries(c).forEach(([mo, teams]) => { out[mo] = {}; Object.entries(teams).forEach(([t, l]) => { out[mo][t] = l.map(r => ({nome:r[0], ind:r[1], ss:r[2], pme:r[3], adm:r[4], total:r[5]})); }); });
+    return out;
+  })();
+  const metaMonth = m => META_EXEC_BY_MONTH[m] || META_EXEC_SEED[m] || null;
+  const allMonths = () => [...new Set([...Object.keys(META_EXEC_SEED), ...Object.keys(META_EXEC_BY_MONTH)])].sort();
+  window.getMetaExecData = () => META_EXEC_BY_MONTH;
+
+  const qOf = m => { const [y, mm] = m.split('-'); return y + '-Q' + Math.ceil(Number(mm) / 3); };
+  const qMonths = q => { const [y, qq] = q.split('-Q'); const s = (Number(qq) - 1) * 3 + 1; return [0,1,2].map(i => y + '-' + String(s + i).padStart(2, '0')); };
+  const qLabel = q => { const [y, qq] = q.split('-Q'); return qq + 'T' + y.slice(2); };
+  const quarters = () => [...new Set(allMonths().map(qOf))].sort();
+  const monthName = m => MES_CURTO[Number(m.slice(5)) - 1];
+
+  // Mesma pessoa com o nome escrito diferente entre meses/arquivos ("Agatha Eiko Rodrigues
+  // Sakamoto" x "Agatha Sakamoto", "Maxuel" x "Maxuel Pimentel Nobrega", "Karollanny" x
+  // "Karollainny"): primeiro nome igual (tolera 2 letras de erro) e último sobrenome igual — ou um
+  // dos dois nomes ter só uma palavra.
+  function samePerson(a, b){
+    const A = norm(a).split(' '), B = norm(b).split(' ');
+    if (!A[0] || !B[0] || lev(A[0], B[0]) > 2) return false;
+    if (A.length === 1 || B.length === 1) return true;
+    return A[A.length - 1] === B[B.length - 1];
+  }
+
+  // Integrado de um executivo num mês, vindo do import normal do BI. null = mês nunca importado;
+  // false = mês importado mas o nome não apareceu lá (trata como "sem dado", nunca como zero).
+  function intFor(mo, nome){
+    const teams = window.getMetaJunhoTeamsStrict ? window.getMetaJunhoTeamsStrict(mo) : null;
+    if (!teams){
+      const hist = INT_EXEC_BY_MONTH[mo];
+      if (!hist) return null;
+      const k = Object.keys(hist).filter(n => samePerson(nome, n)).sort((a, b) => lev(norm(nome), norm(a)) - lev(norm(nome), norm(b)))[0];
+      return k ? hist[k] : false;
+    }
+    const alvo = norm(nome);
+    let best = null, bd = 99;
+    Object.values(teams).forEach(td => (td.members || []).forEach(m => {
+      if (!samePerson(nome, m.nome)) return;
+      const d = lev(alvo, norm(m.nome));
+      if (d < bd){ bd = d; best = m; }
+    }));
+    if (!best) return false;
+    const c = best.cat || {};
+    const g = k => (c[k] && c[k].int) || 0;
+    return { ind:g('IND'), ss:g('SS'), pme:g('PME'), adm:g('ADM'), total: (best.total && best.total.int != null) ? best.total.int : g('IND')+g('SS')+g('PME')+g('ADM') };
+  }
+
+  function buildQuarter(q){
+    const months = qMonths(q);
+    const teams = {};
+    months.forEach((mo, i) => {
+      const md = metaMonth(mo);
+      if (!md) return;
+      Object.entries(md).forEach(([label, list]) => {
+        const t = teams[label] = teams[label] || {};
+        list.forEach(p => {
+          let r = Object.values(t).find(x => samePerson(x.nome, p.nome));
+          if (!r){ r = t[norm(p.nome)] = { nome:p.nome, slots:[null,null,null] }; }
+          else if (p.nome.length > r.nome.length) r.nome = p.nome;
+          r.slots[i] = { meta:p, int:intFor(mo, p.nome) };
+        });
+      });
+    });
+    return { months, teams };
+  }
+
+  // Agrega uma lista de linhas (executivos) — metaTot = meta de todos os meses; intTot/metaBase só
+  // dos meses COM integrado (senão um trimestre sem BI importado apareceria como 0%).
+  function aggregate(rows){
+    const out = { metaTot:0, intTot:0, metaBase:0, cat:{ind:{m:0,i:0},ss:{m:0,i:0},pme:{m:0,i:0},adm:{m:0,i:0}},
+      slots:[0,1,2].map(() => ({hasMeta:false, has:false, meta:0, base:0, int:0})) };
+    rows.forEach(r => r.slots.forEach((s, i) => {
+      if (!s) return;
+      const sl = out.slots[i];
+      sl.hasMeta = true; sl.meta += s.meta.total; out.metaTot += s.meta.total;
+      ['ind','ss','pme','adm'].forEach(k => { out.cat[k].m += s.meta[k]; });
+      if (s.int){
+        sl.has = true; sl.base += s.meta.total; sl.int += s.int.total;
+        out.intTot += s.int.total; out.metaBase += s.meta.total;
+        ['ind','ss','pme','adm'].forEach(k => { out.cat[k].i += s.int[k]; });
+      }
+    }));
+    return out;
+  }
+
+  const pcol = p => p >= 1 ? '#16B87A' : (p >= 0.7 ? '#FFB81C' : '#F5364A');
+
+  function monthsHtml(agg, months){
+    return '<div class="tri-months">' + agg.slots.map((s, i) => {
+      const lab = monthName(months[i]);
+      if (!s.hasMeta) return `<div class="tri-month" title="${lab}: sem meta nesta equipe"><div class="tri-month-bar"></div><span>${lab}</span></div>`;
+      if (!s.has) return `<div class="tri-month" title="${lab}: meta ${fmt0(s.meta)} — Integrado não importado"><div class="tri-month-bar"></div><span>${lab}</span></div>`;
+      const p = s.base ? s.int / s.base : 0;
+      const h = Math.max(8, Math.min(100, p / 1.6 * 100));
+      return `<div class="tri-month" title="${lab}: ${fmt0(s.int)} de ${fmt0(s.base)} (${pct1(p)})"><div class="tri-month-bar"><i style="height:${h}%; background:${pcol(p)};"></i></div><span>${lab}</span></div>`;
+    }).join('') + '</div>';
+  }
+  function barHtml(agg){
+    if (!agg.metaBase) return '<div class="tri-track"></div>';
+    const p = agg.intTot / agg.metaBase;
+    return `<div class="tri-track"><div class="tri-fill" style="width:${Math.min(100, p * 100).toFixed(0)}%; background:${pcol(p)};"></div></div>`;
+  }
+  function catTitle(agg){
+    const L = {ind:'IND', ss:'SS', pme:'PME', adm:'ADM'};
+    return ['ind','ss','pme','adm'].map(k => `${L[k]}: ${agg.metaBase ? fmt0(agg.cat[k].i) + ' / ' : 'meta '}${fmt0(agg.cat[k].m)}`).join(' · ');
+  }
+
+  // ---------- tela ----------
+  const state = { mode:'mes', q:null };
+  const $ = id => document.getElementById(id);
+
+  function renderBar(){
+    const el = $('mjPeriodBtns');
+    if (!el) return;
+    const qs = quarters();
+    const ref = window.getCurrentMonthLabelSlash ? window.getCurrentMonthLabelSlash() : '';
+    el.innerHTML = `<button type="button" class="tri-btn${state.mode === 'mes' ? ' active' : ''}" data-mode="mes">Mês${ref ? ' — ' + ref : ''}</button>` +
+      (qs.length ? '<span class="tri-btn-sep"></span>' : '') +
+      qs.map(q => `<button type="button" class="tri-btn${state.mode === 'tri' && state.q === q ? ' active' : ''}" data-q="${q}" title="Trimestre: ${qMonths(q).map(monthName).join(' + ')}">${qLabel(q)}</button>`).join('');
+  }
+
+  function renderTri(){
+    const q = state.q;
+    const { months, teams } = buildQuarter(q);
+    const cur = window.getMjCurrentTeam ? window.getMjCurrentTeam() : 'ALL_TEAMS';
+    const ordem = SENIOR_LABELS.map(x => x[1]).concat(Object.keys(teams).filter(l => !SENIOR_LABELS.some(x => x[1] === l)));
+    let labels = ordem.filter(l => teams[l]);
+    const scoped = cur !== 'ALL_TEAMS' && teams[cur];
+    if (scoped) labels = [cur];
+
+    const rowsByTeam = {};
+    labels.forEach(l => { rowsByTeam[l] = Object.values(teams[l]).sort((a, b) => aggregate([b]).metaTot - aggregate([a]).metaTot); });
+    const allRows = labels.flatMap(l => rowsByTeam[l]);
+    const tot = aggregate(allRows);
+    const nMeses = tot.slots.filter(s => s.hasMeta).length;
+    const nInt = tot.slots.filter(s => s.has).length;
+    const lab = qLabel(q);
+    const nomesMeses = months.map(monthName).join(' + ');
+
+    $('mjTriTitle').textContent = `Meta vs. Integrado por Executivo — ${lab}`;
+    $('mjTriSub').textContent = `${scoped ? cur : 'Todas as equipes (sem Interior)'} · ${nomesMeses} somados · passe o mouse numa linha pra ver por categoria`;
+    $('mjTriThMeta').textContent = `Meta ${lab}`;
+    $('mjTriThInt').textContent = `Integrado ${lab}`;
+
+    const pctAting = tot.metaBase ? tot.intTot / tot.metaBase : null;
+    const gap = Math.max(0, tot.metaBase - tot.intTot);
+    const kpiHtml = (icon, label, value, sub, cls) => `<div class="kpi"><div class="kpi-icon">${icon}</div><div class="label">${label}</div><div class="value">${value}</div><div class="sub ${cls || ''}">${sub}</div></div>`;
+    $('mjTriKpis').innerHTML = [
+      kpiHtml('<i class=ic-target></i>', `Meta do Trimestre`, fmt0(tot.metaTot) + ' vidas', `${lab} · ${nMeses} de 3 meses com meta`, nMeses < 3 ? 'warn' : ''),
+      kpiHtml('<i class=ic-check></i>', 'Integrado (Realizado)', nInt ? fmt0(tot.intTot) + ' vidas' : '—', nInt ? `Em ${nInt} de ${nMeses} meses` : 'Nenhum mês deste trimestre importado', nInt === nMeses && nInt ? 'pos' : 'warn'),
+      kpiHtml('<i class=ic-chart></i>', '% Atingimento', pctAting == null ? '—' : pct1(pctAting), pctAting == null ? 'Sem Integrado pra comparar' : (nInt < nMeses ? 'Só sobre os meses com Integrado' : (pctAting >= 1 ? 'Acima de 100%' : 'Faltam ' + pct1(1 - pctAting) + ' p/ meta')), pctAting != null && pctAting >= 1 ? 'pos' : 'neg'),
+      kpiHtml('<i class=ic-warn></i>', 'Gap p/ Meta', pctAting == null ? '—' : fmt0(gap) + ' vidas', pctAting == null ? 'Sem Integrado pra comparar' : (nInt < nMeses ? 'Só sobre os meses com Integrado' : 'No trimestre'), 'neg'),
+    ].join('');
+
+    const td = (html, cls) => `<td${cls ? ` class="${cls}"` : ''}>${html}</td>`;
+    const numCells = a => td(fmt0(a.metaTot), 'num') + td(a.metaBase ? fmt0(a.intTot) : '<span class="tri-dim">—</span>', 'num') + td(a.metaBase ? `<b style="color:${pcol(a.intTot / a.metaBase)};">${pct1(a.intTot / a.metaBase)}</b>` : '<span class="tri-dim">—</span>', 'num');
+    let body = '';
+    labels.forEach(l => {
+      const a = aggregate(rowsByTeam[l]);
+      if (!scoped) body += `<tr class="tri-team-row"><td>${l}</td><td>${barHtml(a)}</td><td>${monthsHtml(a, months)}</td>${numCells(a)}</tr>`;
+      rowsByTeam[l].forEach(r => {
+        const a2 = aggregate([r]);
+        const presentes = r.slots.map((s, i) => s ? monthName(months[i]) : null).filter(Boolean);
+        const parcial = presentes.length < 3 ? ` <span class="tri-dim" title="Esteve nesta equipe só nestes meses do trimestre">(${presentes.join('·')})</span>` : '';
+        body += `<tr title="${catTitle(a2)}">${td(r.nome + parcial)}${td(barHtml(a2))}${td(monthsHtml(a2, months))}${numCells(a2)}</tr>`;
+      });
+    });
+    if (!scoped && labels.length > 1) body += `<tr class="tri-total-row"><td>Total — todas as equipes</td><td>${barHtml(tot)}</td><td>${monthsHtml(tot, months)}</td>${numCells(tot)}</tr>`;
+    if (!body) body = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:16px;">Sem meta carregada pra este trimestre/equipe.</td></tr>';
+    $('mjTriBody').innerHTML = body;
+
+    const semInt = tot.slots.map((s, i) => (s.hasMeta && !s.has) ? MES_LONGO[Number(months[i].slice(5)) - 1] : null).filter(Boolean);
+    $('mjTriNote').innerHTML = (semInt.length ? `Integrado ainda não importado pra: <b>${semInt.join(', ')}</b> — a meta aparece, o Integrado e o % não são inventados. Pra completar, importe o Extrato do BI desse mês em Atualizar Dados. ` : '') +
+      'Equipe Interior não entra. Cada executivo aparece na equipe em que estava em cada mês.';
+  }
+
+  function apply(){
+    const view = document.getElementById('viewMj');
+    if (!view) return;
+    const tri = state.mode === 'tri' && state.q && quarters().includes(state.q);
+    if (state.mode === 'tri' && !tri) state.mode = 'mes';
+    const keep = [view.children[0], $('mjPeriodBar'), $('mjTriPanel')];
+    [...view.children].forEach(el => { if (keep.indexOf(el) < 0) el.style.display = tri ? 'none' : ''; });
+    const stats = $('mjBannerStats');
+    if (stats) stats.style.display = tri ? 'none' : '';
+    $('mjTriPanel').style.display = tri ? '' : 'none';
+    if (tri) renderTri();
+  }
+
+  window.__mjAfterRender = function(){ renderBar(); apply(); };
+
+  $('mjPeriodBtns').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.q){ state.mode = 'tri'; state.q = b.dataset.q; }
+    else { state.mode = 'mes'; }
+    renderBar(); apply();
+  });
+
+  // ---------- upload (Atualizar Dados → Opções avançadas) ----------
+  const fileEl = $('fileMetaExec');
+  if (fileEl) fileEl.addEventListener('change', async () => {
+    const st = $('metaExecStatus');
+    const files = [...fileEl.files];
+    if (!files.length){ st.innerHTML = ''; return; }
+    st.innerHTML = '<span style="color:var(--muted);">Lendo...</span>';
+    const msgs = []; let ok = 0;
+    for (const f of files){
+      try {
+        const wb = XLSX.read(new Uint8Array(await f.arrayBuffer()), {type:'array'});
+        const r = parseMetaExecWorkbook(wb);
+        Object.entries(r.months).forEach(([m, t]) => { META_EXEC_BY_MONTH[m] = t; });
+        const nomes = Object.keys(r.months).sort().map(m => MES_LONGO[Number(m.slice(5)) - 1]).join(', ');
+        const nExec = Object.values(r.months).reduce((s, t) => s + Object.values(t).reduce((x, l) => x + l.length, 0), 0);
+        msgs.push(`<div style="color:#1b7a63;"><b>${f.name}</b>: ${nomes} carregado(s) — ${nExec} linhas de executivo (Interior ignorado).</div>`);
+        r.avisos.forEach(a => msgs.push(`<div style="color:var(--red);">${a}</div>`));
+        ok++;
+      } catch(e){
+        msgs.push(`<div style="color:var(--red);"><b>${f.name}</b>: ${e.message}</div>`);
+      }
+    }
+    if (ok) msgs.push('<div style="color:var(--muted); margin-top:4px;">Clique em Publicar pra salvar pra todo mundo.</div>');
+    st.innerHTML = msgs.join('');
+    renderBar(); apply();
+  });
+
+  // ---------- upload: Integrado de MESES PASSADOS (extratos "Corretoras") ----------
+  // O import normal do extrato cru SEMPRE grava no mês corrente (Integrado, Elegibilidade e
+  // Ranking) — subir um extrato de Janeiro por lá sobrescreveria os números vivos. Este caminho
+  // só guarda o Integrado por executivo daquele mês em INT_EXEC_BY_MONTH, sem tocar em mais nada.
+  // O mês vem do rodapé do próprio extrato ("Date é 01/MM/AAAA"). Atribuição executivo ← corretora
+  // usa a Carteira atual (window.CARTEIRA_MAP): conferido contra o arquivo oficial de Maio, bate
+  // quase exato; corretoras que mudaram de executivo desde então podem deslocar poucas dezenas.
+  function detectRawMonth(wb){
+    const sh = wb.Sheets[wb.SheetNames.find(n => n.toUpperCase() === 'EXPORT') || wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sh, {header:1, defval:null, raw:true});
+    for (let i = rows.length - 1; i >= 0; i--){
+      const c = rows[i] && rows[i][0];
+      const m = typeof c === 'string' && /Date\s+é\s+(\d{2})\/(\d{2})\/(\d{4})/i.exec(c);
+      if (m) return m[3] + '-' + m[2];
+    }
+    return null;
+  }
+  const histEl = $('fileIntHist');
+  if (histEl) histEl.addEventListener('change', async () => {
+    const st = $('intHistStatus');
+    const files = [...histEl.files];
+    if (!files.length){ st.innerHTML = ''; return; }
+    if (!window.CARTEIRA_MAP){
+      st.innerHTML = '<div style="color:var(--red);">A Carteira não está carregada nesta sessão — sem ela não dá pra ligar corretora → executivo. Suba a "Carteira / Gestores" aqui em cima e confirme, ou recarregue o painel, e tente de novo.</div>';
+      return;
+    }
+    const latest = window.getLatestKnownMonth ? window.getLatestKnownMonth() : null;
+    const msgs = []; let ok = 0;
+    for (const f of files){
+      try {
+        const wb = XLSX.read(new Uint8Array(await f.arrayBuffer()), {type:'array'});
+        const mo = detectRawMonth(wb);
+        if (!mo) throw new Error('não achei o mês no rodapé ("Date é 01/MM/AAAA") — esse arquivo é um extrato Corretoras do BI?');
+        if (latest && mo >= latest) throw new Error(`${MES_LONGO[Number(mo.slice(5)) - 1]}/${mo.slice(0,4)} é o mês atual (ou mais novo) do painel — esse vai pelo campo normal "Extrato do BI", não por aqui.`);
+        const r = window.parseCorretorasRawWorkbook(wb);
+        const out = {};
+        Object.entries(r.byGestor).forEach(([g, v]) => { out[g] = { ind:v.ind, ss:v.ss, pme:v.pme, adm:v.adm, total:v.ind + v.ss + v.pme + v.adm }; });
+        INT_EXEC_BY_MONTH[mo] = out;
+        const vidas = Object.values(out).reduce((s, v) => s + v.total, 0);
+        msgs.push(`<div style="color:#1b7a63;"><b>${MES_LONGO[Number(mo.slice(5)) - 1]}/${mo.slice(0,4)}</b> (${f.name}): ${Object.keys(out).length} executivos, ${fmt0(vidas)} vidas atribuídas, ${fmt0(r.semGestorVidas)} sem gestor.</div>`);
+        ok++;
+      } catch(e){
+        msgs.push(`<div style="color:var(--red);"><b>${f.name}</b>: ${e.message}</div>`);
+      }
+    }
+    if (ok) msgs.push('<div style="color:var(--muted); margin-top:4px;">Não altera o mês atual, Elegibilidade nem Ranking. Clique em Publicar pra salvar pra todo mundo.</div>');
+    st.innerHTML = msgs.join('');
+    renderBar(); apply();
+  });
+
+  renderBar();
+  apply();
 })();
 
