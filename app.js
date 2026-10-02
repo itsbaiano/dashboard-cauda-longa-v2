@@ -5913,8 +5913,7 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
 
   // Usado pelo módulo "Metas por executivo" pra ler extratos Corretoras de MESES PASSADOS sem
   // passar por updateIntegradoFromRaw (que sempre grava no mês corrente).
-  window.parseCorretorasRawWorkbook = parseCorretorasRawWorkbook;
-  // Achata o resultado de parseCorretorasRawWorkbook pro formato que updateRankingData
+  window.parseCorretorasRawWorkbook = parseCorretorasRawWorkbook;  // Achata o resultado de parseCorretorasRawWorkbook pro formato que updateRankingData
   // espera — assim o upload do extrato bruto (sem o arquivo "NDI SP - Por Gestor" inteiro)
   // também atualiza o Ranking de Vendas, não só Desempenho Comercial/Elegibilidade. Antes
   // disso Victor precisava sempre subir a planilha inteira (com Meta) só pra manter o
@@ -6982,7 +6981,12 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     if (!best) return false;
     const c = best.cat || {};
     const g = k => (c[k] && c[k].int) || 0;
-    return { ind:g('IND'), ss:g('SS'), pme:g('PME'), adm:g('ADM'), total: (best.total && best.total.int != null) ? best.total.int : g('IND')+g('SS')+g('PME')+g('ADM') };
+    // Realizado = IND + SS + PME, SEM ADM — mesma regra do "RANKING ANUAL - 2026" e do realizado
+    // dos prints do Desafio (Adesão real = 0), conferida por Victor em 2026-10-02. Não usa
+    // best.total.int porque, entre o import oficial (inclui ADM) e o extrato cru (não inclui),
+    // esse total muda de definição de um mês pra outro. A Meta Total continua incluindo Adesão,
+    // como no relatório da Hapvida.
+    return { ind:g('IND'), ss:g('SS'), pme:g('PME'), adm:g('ADM'), total: g('IND')+g('SS')+g('PME') };
   }
 
   function buildQuarter(q){
@@ -7200,7 +7204,7 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
         if (latest && mo >= latest) throw new Error(`${MES_LONGO[Number(mo.slice(5)) - 1]}/${mo.slice(0,4)} é o mês atual (ou mais novo) do painel — esse vai pelo campo normal "Extrato do BI", não por aqui.`);
         const r = window.parseCorretorasRawWorkbook(wb);
         const out = {};
-        Object.entries(r.byGestor).forEach(([g, v]) => { out[g] = { ind:v.ind, ss:v.ss, pme:v.pme, adm:v.adm, total:v.ind + v.ss + v.pme + v.adm }; });
+        Object.entries(r.byGestor).forEach(([g, v]) => { out[g] = { ind:v.ind, ss:v.ss, pme:v.pme, adm:v.adm, total:v.ind + v.ss + v.pme }; });
         INT_EXEC_BY_MONTH[mo] = out;
         const vidas = Object.values(out).reduce((s, v) => s + v.total, 0);
         msgs.push(`<div style="color:#1b7a63;"><b>${MES_LONGO[Number(mo.slice(5)) - 1]}/${mo.slice(0,4)}</b> (${f.name}): ${Object.keys(out).length} executivos, ${fmt0(vidas)} vidas atribuídas, ${fmt0(r.semGestorVidas)} sem gestor.</div>`);
