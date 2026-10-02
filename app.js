@@ -6829,8 +6829,10 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
      por nome. Mês sem import = sem Integrado (a tela mostra "—", nunca zero inventado).
    Regras (Victor): Interior fora (aqui = equipes dos gerentes sênior Maria Aparecida Cabral e
    Leonardo Galerani — a da Cabral aparece DENTRO da seção "SP HAP NDI" nos arquivos de
-   2º/3º tri, por isso exclui por nome, não só pela seção "SP INTERIOR"). Executivo fica na
-   equipe em que estava em cada mês/trimestre — trocas ao longo do ano não são reescritas.
+   2º/3º tri, por isso exclui por nome, não só pela seção "SP INTERIOR"). REVISADO por Victor em
+   2026-10-02: a visão é da CARTEIRA — todo trimestre mostra cada executivo na equipe em que ele
+   está HOJE (mês mais recente com meta), ver teamOfNow(); quem saiu da estrutura não entra.
+   (Antes: "executivo fica na equipe em que estava em cada mês" — revertido a pedido.)
    ========================================================= */
 (function(){
   const norm = s => String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
@@ -6989,15 +6991,32 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     return { ind:g('IND'), ss:g('SS'), pme:g('PME'), adm:g('ADM'), total: g('IND')+g('SS')+g('PME') };
   }
 
+  // Estrutura ATUAL = equipes do mês mais recente com meta carregada. A visão é da CARTEIRA, não do
+  // executivo (Victor, 2026-10-02): todo trimestre mostra cada executivo na equipe em que ele está
+  // hoje, mesmo que na época estivesse em outra; quem não está mais na estrutura atual (ex.: foi
+  // pro Interior) não entra em nenhum trimestre. Quando entrar a meta de Outubro, "hoje" passa a
+  // ser Outubro automaticamente.
+  function teamOfNow(nome){
+    const ms = allMonths();
+    const md = ms.length ? metaMonth(ms[ms.length - 1]) : null;
+    if (!md) return null;
+    for (const [label, list] of Object.entries(md)){
+      if (list.some(p => samePerson(p.nome, nome))) return label;
+    }
+    return null;
+  }
+
   function buildQuarter(q){
     const months = qMonths(q);
     const teams = {};
     months.forEach((mo, i) => {
       const md = metaMonth(mo);
       if (!md) return;
-      Object.entries(md).forEach(([label, list]) => {
-        const t = teams[label] = teams[label] || {};
+      Object.values(md).forEach(list => {
         list.forEach(p => {
+          const label = teamOfNow(p.nome);
+          if (!label) return;
+          const t = teams[label] = teams[label] || {};
           let r = Object.values(t).find(x => samePerson(x.nome, p.nome));
           if (!r){ r = t[norm(p.nome)] = { nome:p.nome, slots:[null,null,null] }; }
           else if (p.nome.length > r.nome.length) r.nome = p.nome;
@@ -7115,7 +7134,7 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
 
     const semInt = tot.slots.map((s, i) => (s.hasMeta && !s.has) ? MES_LONGO[Number(months[i].slice(5)) - 1] : null).filter(Boolean);
     $('mjTriNote').innerHTML = (semInt.length ? `Integrado ainda não importado pra: <b>${semInt.join(', ')}</b> — a meta aparece, o Integrado e o % não são inventados. Pra completar, importe o Extrato do BI desse mês em Atualizar Dados. ` : '') +
-      'Equipe Interior não entra. Cada executivo aparece na equipe em que estava em cada mês.';
+      'Equipe Interior não entra. Visão da carteira: cada executivo aparece na equipe em que está hoje, em todos os trimestres.';
   }
 
   function apply(){
