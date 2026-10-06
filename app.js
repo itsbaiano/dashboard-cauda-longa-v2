@@ -3567,16 +3567,46 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
   // Tamb\u00e9m cobre m\u00eas com fechamento oficial mas SEM hist\u00f3rico no RANKDATA (ex.: Junho \u2014 o painel s\u00f3
   // come\u00e7ou a guardar m/mc em 04/09): usa o extrato do BI embutido em vez de mostrar a tela vazia.
   let rankUsingSynth = false, rankSynthHasPrev = true;
+  // Mesmo gestor com o nome em conven\u00e7\u00f5es diferentes ("Pablo Amora" x "PABLO SERGIO RIBEIRO AMORA"):
+  // as palavras do nome curto est\u00e3o todas no nome longo.
+  const rkNormG = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/\s+/g,' ').trim();
+  const rkSameG = (a, b) => {
+    const A = rkNormG(a), B = rkNormG(b);
+    if (!A || !B) return false;
+    if (A === B) return true;
+    const stop = new Set(['DE','DA','DO','DOS','DAS']);
+    const ta = A.split(' ').filter(t => !stop.has(t)), tb = B.split(' ').filter(t => !stop.has(t));
+    const [small, big] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
+    return small.length >= 2 && small.every(t => big.includes(t));
+  };
   function rankSourceRows(){
     rankUsingSynth = false;
     const mo = window.getCurrentMonth ? window.getCurrentMonth() : null;
     if (mo && window.rankSynthRows && !rankIsLatestMonth()){
       const idx = rankMonthIndexOf(mo);
-      if (!RANKDATA.some(r => r.m && r.m[idx] > 0)){
-        const synth = window.rankSynthRows(mo);
-        if (synth){
+      const synth = window.rankSynthRows(mo);
+      if (synth){
+        // RANKDATA s\u00f3 guarda o hist\u00f3rico mensal desde 04/09: se o m\u00eas n\u00e3o est\u00e1 l\u00e1 (ou est\u00e1
+        // incompleto \u2014 menos de 90% do que o extrato do BI tem), usa o extrato embutido.
+        const have = RANKDATA.reduce((s, r) => s + ((r.m && r.m[idx]) || 0), 0);
+        const need = synth.reduce((s, r) => s + r.cur, 0);
+        // Filtro por segmento (Individual/PIM/Middle/ADM) precisa do mix do mês: se o RANKDATA só
+        // tem o total daquele mês (caso do mês anterior de um import), o segmento daria tudo zero.
+        const segEl = document.getElementById('rankSeg');
+        const segAtivo = segEl && segEl.value && segEl.value !== 't';
+        const temMix = RANKDATA.some(r => r.mc && ['ind','pim','mid','adm'].some(k => r.mc[k] && r.mc[k][idx] > 0));
+        if (have < need * 0.9 || (segAtivo && !temMix)){
           rankUsingSynth = true; rankSynthHasPrev = synth.hasPrev !== false;
-          return synth.map(r => ({ ...r, e: (window.GESTOR_EQUIPE && window.GESTOR_EQUIPE[r.g]) || '\u2014' }));
+          // Gestor/equipe no MESMO formato das linhas do RANKDATA (sen\u00e3o os filtros de equipe/gestor,
+          // montados a partir do RANKDATA, n\u00e3o acham as linhas reconstru\u00eddas).
+          const gSet = [...new Set(RANKDATA.map(r => r.g).filter(g => g && g !== '#N/D'))];
+          const eByG = {}; RANKDATA.forEach(r => { if (r.g && r.e && r.e !== '\u2014' && !eByG[r.g]) eByG[r.g] = r.e; });
+          const GE = window.GESTOR_EQUIPE || {}, geKeys = Object.keys(GE), memo = {};
+          const resolve = f => memo[f] || (memo[f] = (() => {
+            const g = gSet.find(x => rkSameG(f, x)) || geKeys.find(x => rkSameG(f, x)) || f;
+            return { g, e: eByG[g] || GE[g] || GE[geKeys.find(x => rkSameG(f, x))] || '\u2014' };
+          })());
+          return synth.map(r => { const x = resolve(r.g); return { ...r, g: x.g, e: x.e }; });
         }
       }
     }
