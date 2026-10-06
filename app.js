@@ -7134,8 +7134,11 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     return null;
   }
 
-  function buildQuarter(q){
-    const months = qMonths(q);
+  // qs = lista de trimestres (1 ou mais, ex.: ['2026-Q1','2026-Q2']): os meses de todos entram
+  // na mesma tabela, somados (pedido do Victor, 2026-10-06).
+  function buildQuarter(qs){
+    const months = [...new Set([].concat(qs).flatMap(qMonths))].sort();
+    const blank = () => months.map(() => null);
     const teams = {};
     months.forEach((mo, i) => {
       const md = metaMonth(mo);
@@ -7146,7 +7149,7 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
           if (!label) return;
           const t = teams[label] = teams[label] || {};
           let r = Object.values(t).find(x => samePerson(x.nome, p.nome));
-          if (!r){ r = t[norm(p.nome)] = { nome:p.nome, slots:[null,null,null] }; }
+          if (!r){ r = t[norm(p.nome)] = { nome:p.nome, slots:blank() }; }
           else if (p.nome.length > r.nome.length) r.nome = p.nome;
           r.slots[i] = { meta:p, int:intFor(mo, p.nome) };
         });
@@ -7164,7 +7167,7 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
         if (r && r.slots[i]) return;
         const it = intFor(mo, p.nome);
         if (!it || typeof it !== 'object') return;
-        if (!r) r = t[norm(p.nome)] = { nome:p.nome, slots:[null,null,null] };
+        if (!r) r = t[norm(p.nome)] = { nome:p.nome, slots:blank() };
         r.slots[i] = { meta:{ nome:p.nome, ind:0, ss:0, pme:0, adm:0, total:0 }, int:it, semMeta:true };
       });
       if (Object.keys(t).length) teams[label] = t;
@@ -7174,9 +7177,9 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
 
   // Agrega uma lista de linhas (executivos) — metaTot = meta de todos os meses; intTot/metaBase só
   // dos meses COM integrado (senão um trimestre sem BI importado apareceria como 0%).
-  function aggregate(rows){
+  function aggregate(rows, n){
     const out = { metaTot:0, intTot:0, metaBase:0, nInt:0, cat:{ind:{m:0,i:0},ss:{m:0,i:0},pme:{m:0,i:0},adm:{m:0,i:0}},
-      slots:[0,1,2].map(() => ({hasMeta:false, has:false, meta:0, base:0, int:0})) };
+      slots:Array.from({length:n}, () => ({hasMeta:false, has:false, meta:0, base:0, int:0})) };
     rows.forEach(r => r.slots.forEach((s, i) => {
       if (!s) return;
       const sl = out.slots[i];
@@ -7194,7 +7197,7 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
   const pcol = p => p >= 1 ? '#16B87A' : (p >= 0.7 ? '#FFB81C' : '#F5364A');
 
   function monthsHtml(agg, months){
-    return '<div class="tri-months">' + agg.slots.map((s, i) => {
+    return `<div class="tri-months${agg.slots.length > 3 ? ' tri-months-many' : ''}">` + agg.slots.map((s, i) => {
       const lab = monthName(months[i]);
       if (!s.hasMeta) return `<div class="tri-month" title="${lab}: sem meta nesta equipe"><div class="tri-month-bar"></div><span>${lab}</span></div>`;
       if (!s.has) return `<div class="tri-month" title="${lab}: meta ${fmt0(s.meta)} — Integrado não importado"><div class="tri-month-bar"></div><span>${lab}</span></div>`;
@@ -7215,7 +7218,8 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
   }
 
   // ---------- tela ----------
-  const state = { mode:'mes', q:null };
+  // qs = trimestres selecionados (um ou mais — clicar em outro trimestre soma, clicar de novo tira)
+  const state = { mode:'mes', qs:[] };
   const $ = id => document.getElementById(id);
 
   function renderBar(){
@@ -7225,12 +7229,15 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     const ref = window.getCurrentMonthLabelSlash ? window.getCurrentMonthLabelSlash() : '';
     el.innerHTML = `<button type="button" class="tri-btn${state.mode === 'mes' ? ' active' : ''}" data-mode="mes">Mês${ref ? ' — ' + ref : ''}</button>` +
       (qs.length ? '<span class="tri-btn-sep"></span>' : '') +
-      qs.map(q => `<button type="button" class="tri-btn${state.mode === 'tri' && state.q === q ? ' active' : ''}" data-q="${q}" title="Trimestre: ${qMonths(q).map(monthName).join(' + ')}">${qLabel(q)}</button>`).join('');
+      qs.map(q => `<button type="button" class="tri-btn${state.mode === 'tri' && state.qs.includes(q) ? ' active' : ''}" data-q="${q}" title="${state.qs.includes(q) && state.mode === 'tri' ? 'Clique pra tirar este trimestre da soma' : 'Trimestre: ' + qMonths(q).map(monthName).join(' + ') + ' — clique em mais de um pra somar'}">${qLabel(q)}</button>`).join('') +
+      (qs.length > 1 ? `<span class="tri-bar-hint">${state.mode === 'tri' && state.qs.length > 1 ? 'Somando ' + state.qs.map(qLabel).join(' + ') : 'Dica: clique em mais de um trimestre pra somar'}</span>` : '');
   }
 
   function renderTri(){
-    const q = state.q;
-    const { months, teams } = buildQuarter(q);
+    const sel = state.qs.filter(q => quarters().includes(q)).sort();
+    const multi = sel.length > 1;
+    const { months, teams } = buildQuarter(sel);
+    const N = months.length;
     const cur = window.getMjCurrentTeam ? window.getMjCurrentTeam() : 'ALL_TEAMS';
     const ordem = SENIOR_LABELS.map(x => x[1]).concat(Object.keys(teams).filter(l => !SENIOR_LABELS.some(x => x[1] === l)));
     let labels = ordem.filter(l => teams[l]);
@@ -7238,13 +7245,14 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     if (scoped) labels = [cur];
 
     const rowsByTeam = {};
-    labels.forEach(l => { rowsByTeam[l] = Object.values(teams[l]).sort((a, b) => aggregate([b]).metaTot - aggregate([a]).metaTot); });
+    labels.forEach(l => { rowsByTeam[l] = Object.values(teams[l]).sort((a, b) => aggregate([b], N).metaTot - aggregate([a], N).metaTot); });
     const allRows = labels.flatMap(l => rowsByTeam[l]);
-    const tot = aggregate(allRows);
+    const tot = aggregate(allRows, N);
     const nMeses = tot.slots.filter(s => s.hasMeta).length;
     const nInt = tot.slots.filter(s => s.has).length;
-    const lab = qLabel(q);
+    const lab = sel.map(qLabel).join(' + ');
     const nomesMeses = months.map(monthName).join(' + ');
+    const per = multi ? 'do Período' : 'do Trimestre';
 
     $('mjTriTitle').textContent = `Meta vs. Integrado por Executivo — ${lab}`;
     $('mjTriSub').textContent = `${scoped ? cur : 'Todas as equipes (sem Interior)'} · ${nomesMeses} somados · passe o mouse numa linha pra ver por categoria`;
@@ -7255,27 +7263,27 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     const gap = Math.max(0, tot.metaBase - tot.intTot);
     const kpiHtml = (icon, label, value, sub, cls) => `<div class="kpi"><div class="kpi-icon">${icon}</div><div class="label">${label}</div><div class="value">${value}</div><div class="sub ${cls || ''}">${sub}</div></div>`;
     $('mjTriKpis').innerHTML = [
-      kpiHtml('<i class=ic-target></i>', `Meta do Trimestre`, fmt0(tot.metaTot) + ' vidas', `${lab} · ${nMeses} de 3 meses com meta`, nMeses < 3 ? 'warn' : ''),
-      kpiHtml('<i class=ic-check></i>', 'Integrado (Realizado)', nInt ? fmt0(tot.intTot) + ' vidas' : '—', nInt ? `Em ${nInt} de ${nMeses} meses` : 'Nenhum mês deste trimestre importado', nInt === nMeses && nInt ? 'pos' : 'warn'),
+      kpiHtml('<i class=ic-target></i>', `Meta ${per}`, fmt0(tot.metaTot) + ' vidas', `${lab} · ${nMeses} de ${N} meses com meta`, nMeses < N ? 'warn' : ''),
+      kpiHtml('<i class=ic-check></i>', 'Integrado (Realizado)', nInt ? fmt0(tot.intTot) + ' vidas' : '—', nInt ? `Em ${nInt} de ${nMeses} meses` : (multi ? 'Nenhum mês deste período importado' : 'Nenhum mês deste trimestre importado'), nInt === nMeses && nInt ? 'pos' : 'warn'),
       kpiHtml('<i class=ic-chart></i>', '% Atingimento', pctAting == null ? '—' : pct1(pctAting), pctAting == null ? 'Sem Integrado pra comparar' : (nInt < nMeses ? 'Só sobre os meses com Integrado' : (pctAting >= 1 ? 'Acima de 100%' : 'Faltam ' + pct1(1 - pctAting) + ' p/ meta')), pctAting != null && pctAting >= 1 ? 'pos' : 'neg'),
-      kpiHtml('<i class=ic-warn></i>', 'Gap p/ Meta', pctAting == null ? '—' : fmt0(gap) + ' vidas', pctAting == null ? 'Sem Integrado pra comparar' : (nInt < nMeses ? 'Só sobre os meses com Integrado' : 'No trimestre'), 'neg'),
+      kpiHtml('<i class=ic-warn></i>', 'Gap p/ Meta', pctAting == null ? '—' : fmt0(gap) + ' vidas', pctAting == null ? 'Sem Integrado pra comparar' : (nInt < nMeses ? 'Só sobre os meses com Integrado' : (multi ? 'No período' : 'No trimestre')), 'neg'),
     ].join('');
 
     const td = (html, cls) => `<td${cls ? ` class="${cls}"` : ''}>${html}</td>`;
     const numCells = a => td(fmt0(a.metaTot), 'num') + td(a.nInt ? fmt0(a.intTot) : '<span class="tri-dim">—</span>', 'num') + td(a.metaBase ? `<b style="color:${pcol(a.intTot / a.metaBase)};">${pct1(a.intTot / a.metaBase)}</b>` : '<span class="tri-dim">—</span>', 'num');
     let body = '';
     labels.forEach(l => {
-      const a = aggregate(rowsByTeam[l]);
+      const a = aggregate(rowsByTeam[l], N);
       if (!scoped) body += `<tr class="tri-team-row"><td>${l}</td><td>${barHtml(a)}</td><td>${monthsHtml(a, months)}</td>${numCells(a)}</tr>`;
       rowsByTeam[l].forEach(r => {
-        const a2 = aggregate([r]);
+        const a2 = aggregate([r], N);
         const presentes = r.slots.map((s, i) => s ? monthName(months[i]) : null).filter(Boolean);
-        const parcial = presentes.length < 3 ? ` <span class="tri-dim" title="Esteve nesta equipe só nestes meses do trimestre">(${presentes.join('·')})</span>` : '';
+        const parcial = presentes.length < N ? ` <span class="tri-dim" title="Esteve nesta equipe só nestes meses do período">(${presentes.join('·')})</span>` : '';
         body += `<tr title="${catTitle(a2)}">${td(r.nome + parcial)}${td(barHtml(a2))}${td(monthsHtml(a2, months))}${numCells(a2)}</tr>`;
       });
     });
     if (!scoped && labels.length > 1) body += `<tr class="tri-total-row"><td>Total — todas as equipes</td><td>${barHtml(tot)}</td><td>${monthsHtml(tot, months)}</td>${numCells(tot)}</tr>`;
-    if (!body) body = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:16px;">Sem meta carregada pra este trimestre/equipe.</td></tr>';
+    if (!body) body = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:16px;">Sem meta carregada pra este período/equipe.</td></tr>';
     $('mjTriBody').innerHTML = body;
 
     const semInt = tot.slots.map((s, i) => (s.hasMeta && !s.has) ? MES_LONGO[Number(months[i].slice(5)) - 1] : null).filter(Boolean);
@@ -7287,7 +7295,8 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
   function apply(){
     const view = document.getElementById('viewMj');
     if (!view) return;
-    const tri = state.mode === 'tri' && state.q && quarters().includes(state.q);
+    state.qs = state.qs.filter(q => quarters().includes(q));
+    const tri = state.mode === 'tri' && state.qs.length > 0;
     if (state.mode === 'tri' && !tri) state.mode = 'mes';
     const keep = [view.children[0], $('mjPeriodBar'), $('mjTriPanel')];
     [...view.children].forEach(el => { if (keep.indexOf(el) < 0) el.style.display = tri ? 'none' : ''; });
@@ -7401,7 +7410,13 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
   $('mjPeriodBtns').addEventListener('click', e => {
     const b = e.target.closest('button');
     if (!b) return;
-    if (b.dataset.q){ state.mode = 'tri'; state.q = b.dataset.q; }
+    if (b.dataset.q){
+      // Primeiro clique entra na visão por trimestre; cliques em outros trimestres SOMAM; clicar
+      // num já marcado tira da soma (se sobrar nenhum, volta pra visão mensal).
+      if (state.mode !== 'tri'){ state.mode = 'tri'; state.qs = [b.dataset.q]; }
+      else if (state.qs.includes(b.dataset.q)){ state.qs = state.qs.filter(q => q !== b.dataset.q); if (!state.qs.length) state.mode = 'mes'; }
+      else state.qs = state.qs.concat(b.dataset.q).sort();
+    }
     else { state.mode = 'mes'; }
     renderBar(); apply();
   });
