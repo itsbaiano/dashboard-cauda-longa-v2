@@ -6943,7 +6943,7 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
   let INT_EXEC_BY_MONTH = window.__DASH_DATA__.INT_EXEC_BY_MONTH || {};
   window.getIntExecData = () => INT_EXEC_BY_MONTH;
   // Extratos "Corretoras" do BI de Jan–Set/26 EMBUTIDOS no código, por CÓDIGO de corretora:
-  // { 'AAAA-MM': { código: [IND, SS, PME, ADM] } } (ADM só informativo; Integrado = IND+SS+PME).
+  // { 'AAAA-MM': { código: [IND, SS, PME, ADM] } } (Integrado = IND+SS+PME+ADM, ver intFor).
   // O executivo de cada código NÃO está gravado aqui: sai da Carteira que o painel já tem
   // (window.CARTEIRA_MAP), pela mesma regra do import normal (attributeCorretorasAgg) — então
   // quando a Carteira mudar, o histórico acompanha. Gerado em 2026-10-05 dos extratos
@@ -6965,7 +6965,7 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     });
     const r = window.attributeCorretorasAgg(agg, carteira);
     const out = {};
-    Object.entries(r.byGestor).forEach(([g, v]) => { out[g] = { ind:v.ind, ss:v.ss, pme:v.pme, adm:v.adm, total:v.ind + v.ss + v.pme }; });
+    Object.entries(r.byGestor).forEach(([g, v]) => { out[g] = { ind:v.ind, ss:v.ss, pme:v.pme, adm:v.adm, total:v.ind + v.ss + v.pme + v.adm }; });
     intSeedCache[mo] = { carteira, out };
     return out;
   }  // Meses entregues junto com o código (1º tri digitado dos prints; 2º/3º tri lidos dos arquivos
@@ -7011,7 +7011,10 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     const hist = INT_EXEC_BY_MONTH[mo] || seedHist(mo);
     if (hist){
       const k = Object.keys(hist).filter(n => samePerson(nome, n)).sort((a, b) => lev(norm(nome), norm(a)) - lev(norm(nome), norm(b)))[0];
-      return k ? hist[k] : false;
+      if (!k) return false;
+      const h = hist[k];
+      // Integrado = IND+SS+PME+ADM, recalculado aqui (extratos subidos antes de 06/10 gravaram sem ADM).
+      return { ind:h.ind||0, ss:h.ss||0, pme:h.pme||0, adm:h.adm||0, total:(h.ind||0) + (h.ss||0) + (h.pme||0) + (h.adm||0) };
     }
     const teams = window.getMetaJunhoTeamsStrict ? window.getMetaJunhoTeamsStrict(mo) : null;
     if (!teams) return null;
@@ -7025,12 +7028,12 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     if (!best) return false;
     const c = best.cat || {};
     const g = k => (c[k] && c[k].int) || 0;
-    // Realizado = IND + SS + PME, SEM ADM — mesma regra do "RANKING ANUAL - 2026" e do realizado
-    // dos prints do Desafio (Adesão real = 0), conferida por Victor em 2026-10-02. Não usa
-    // best.total.int porque, entre o import oficial (inclui ADM) e o extrato cru (não inclui),
-    // esse total muda de definição de um mês pra outro. A Meta Total continua incluindo Adesão,
-    // como no relatório da Hapvida.
-    return { ind:g('IND'), ss:g('SS'), pme:g('PME'), adm:g('ADM'), total: g('IND')+g('SS')+g('PME') };
+    // Realizado = IND + SS + PME + ADM (Total do BI). Em 02/10/2026 a regra era SEM ADM; em
+    // 06/10/2026 Victor decidiu INCLUIR o ADM (o RANKING ANUAL corrigido já soma; com ADM os 15
+    // executivos × Jan–Set batem 100%, sem ADM só diferem Camila/Erika/Wilder/Patricia). Soma as
+    // categorias em vez de usar best.total.int pra a definição não variar entre import oficial e
+    // extrato cru. A Meta Total também inclui Adesão (ADM).
+    return { ind:g('IND'), ss:g('SS'), pme:g('PME'), adm:g('ADM'), total: g('IND')+g('SS')+g('PME')+g('ADM') };
   }
 
   // Estrutura ATUAL = equipes do mês mais recente com meta carregada. A visão é da CARTEIRA, não do
@@ -7284,7 +7287,7 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
         if (latest && mo >= latest) throw new Error(`${MES_LONGO[Number(mo.slice(5)) - 1]}/${mo.slice(0,4)} é o mês atual (ou mais novo) do painel — esse vai pelo campo normal "Extrato do BI", não por aqui.`);
         const r = window.parseCorretorasRawWorkbook(wb);
         const out = {};
-        Object.entries(r.byGestor).forEach(([g, v]) => { out[g] = { ind:v.ind, ss:v.ss, pme:v.pme, adm:v.adm, total:v.ind + v.ss + v.pme }; });
+        Object.entries(r.byGestor).forEach(([g, v]) => { out[g] = { ind:v.ind, ss:v.ss, pme:v.pme, adm:v.adm, total:v.ind + v.ss + v.pme + v.adm }; });
         INT_EXEC_BY_MONTH[mo] = out;
         const vidas = Object.values(out).reduce((s, v) => s + v.total, 0);
         msgs.push(`<div style="color:#1b7a63;"><b>${MES_LONGO[Number(mo.slice(5)) - 1]}/${mo.slice(0,4)}</b> (${f.name}): ${Object.keys(out).length} executivos, ${fmt0(vidas)} vidas atribuídas, ${fmt0(r.semGestorVidas)} sem gestor.</div>`);
