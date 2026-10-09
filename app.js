@@ -1452,6 +1452,18 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
     return zip.generateAsync({ type:'blob', mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', compression:'DEFLATE' });
   }
 
+  // Extrato completo do T6140B: o desta aba (import recente) ou o publicado no Firestore (seção T6140B_EXTRATO, fora
+  // do login — só é buscado aqui, no clique). Sem nenhum → null (a aba T6140B sai resumida).
+  async function pendObterT6140bExtrato(){
+    if (window.__T6140B_EXTRATO && window.__T6140B_EXTRATO.texto) return window.__T6140B_EXTRATO;
+    if (!window.fsReadSection) return null;
+    try {
+      const v = await window.fsReadSection('T6140B_EXTRATO');
+      if (v && v.texto){ window.__T6140B_EXTRATO = v; return v; }
+    } catch(e){ console.warn('T6140B completo indisponível:', e && e.message); }
+    return null;
+  }
+
   async function pendBaixarXlsx(){
     const rows = pendLastPmeFiltered.slice();
     if (!rows.length) return;
@@ -1537,8 +1549,33 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
         ['beneficiarios',12], ['status',12], ['corretora_nome',42], ['vendedor_nome',34], ['GESTOR',34], ['DATA RECEBIMENTO',15], ['DITEC',16], ['CADASTRO',20]],
         props.map(p => [numOuTxt(p.p), p.em || '', p.cn || '', dataXl(p.dn), dataXl(p.vg), p.bn || 0, p.st || '', p.co || '', p.vd || '',
                          String(p.g || '').toUpperCase(), dataXl(p.dr), p.di || '', p.ca || '']), [4,5,11]);
-      montaAba('T6140B', [['NU_CONTROLE',13], ['DT_RECEBIMENTO',15], ['STATUS_AREA_MÉDICA',20], ['STATUS_CADASTRO',22], ['STATUS_PROPOSTA_BITIX',26]],
-        props.filter(p => p.dr || p.di || p.ca || p.bi).map(p => [numOuTxt(p.p), dataXl(p.dr), p.di || '', p.ca || '', p.bi || '']), [2]);
+      // T6140B: o extrato INTEIRO quando o painel tem (importado nesta aba, ou publicado — lido do Firestore só agora);
+      // senão, os campos resumidos de antes.
+      const extratoT6 = await pendObterT6140bExtrato();
+      let notaT6;
+      if (extratoT6){
+        const shT = XLSX.read(extratoT6.texto, { type:'string', raw:true });
+        const linhasT = XLSX.utils.sheet_to_json(shT.Sheets[shT.SheetNames[0]], { header:1, raw:true, defval:'' })
+          .filter(l => l.some(v => String(v).trim() !== ''));
+        const cabT = (linhasT.shift() || []).map(h => String(h).trim());
+        const ehData = cabT.map(h => /^DT_/i.test(h));
+        const manterTexto = cabT.map(h => /CGC|CPF/i.test(h)); // CNPJ/CPF: texto, senão o Excel mostra em notação científica
+        const conv = (v, i) => {
+          const s = String(v == null ? '' : v).trim();
+          if (!s) return '';
+          if (ehData[i]){ const m = /^(\d{2})\/(\d{2})\/(\d{4})/.exec(s); if (m) return new Date(Date.UTC(+m[3], +m[2]-1, +m[1])); }
+          if (!manterTexto[i] && /^\d{1,12}$/.test(s)) return Number(s);
+          return s;
+        };
+        montaAba('T6140B', cabT.map(h => [h, Math.max(12, Math.min(40, h.length + 4))]),
+          linhasT.map(l => cabT.map((_, i) => conv(l[i], i))), ehData.map((d, i) => d ? i + 1 : 0).filter(Boolean));
+        notaT6 = `Aba T6140B: extrato completo "${extratoT6.nome}" (importado em ${extratoT6.importadoEm}), ${linhasT.length} linhas.`;
+      } else {
+        montaAba('T6140B', [['NU_CONTROLE',13], ['DT_RECEBIMENTO',15], ['STATUS_AREA_MÉDICA',20], ['STATUS_CADASTRO',22], ['STATUS_PROPOSTA_BITIX',26]],
+          props.filter(p => p.dr || p.di || p.ca || p.bi).map(p => [numOuTxt(p.p), dataXl(p.dr), p.di || '', p.ca || '', p.bi || '']), [2]);
+        notaT6 = 'Aba T6140B: resumida (o extrato completo ainda não foi publicado no painel).';
+      }
+      [wd, we].forEach(sh => { const c = sh === wd ? 10 : 12; sh.getCell(3, c).value = notaT6; sh.getCell(3, c).font = { italic:true, size:9, color:{ argb:'FF56608F' } }; });
 
       wb.views = [{ activeTab: 0 }];
       wb.worksheets.forEach(s => { s.properties.tabColor = { argb: /DINÂMICA|ESTEIRA/.test(s.name) ? VERDE : NAVY }; });
@@ -6054,7 +6091,7 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     return html;
   }
 
-  let pendingMeta = null, pendingElig = null, pendingCarteira = null, pendingPendPme = null, pendingPendPf = null, pendingCorretorasRaw = null, pendingEligBridge = null, pendingPropostas = null, pendingAssinatura = null, pendingCrescimentoGeral = null;
+  let pendingMeta = null, pendingElig = null, pendingCarteira = null, pendingPendPme = null, pendingPendPf = null, pendingCorretorasRaw = null, pendingEligBridge = null, pendingPropostas = null, pendingAssinatura = null, pendingCrescimentoGeral = null, pendingT6140bRaw = null;
   let pendingRankCur = null, pendingRankPrev = null;
 
   // Gestores da equipe do Rio (excluídos do ranking de SP)
@@ -6970,7 +7007,9 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
           try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
           catch(_){ text = new TextDecoder('windows-1252').decode(bytes); }
           if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-          resolve(XLSX.read(text, { type:'string', raw:true }));
+          const wb = XLSX.read(text, { type:'string', raw:true });
+          wb.__textoCru = text; // o T6140B guarda o arquivo inteiro pra aba T6140B do "Baixar .xlsx" (09/10/2026)
+          resolve(wb);
         } catch(err){ reject(err); }
       };
       reader.onerror = () => reject(new Error('Falha ao ler o arquivo.'));
@@ -7034,7 +7073,7 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     document.getElementById('filePendPme').value = '';
     document.getElementById('filePendPf').value = '';
     IMPORT_FILE_IDS.forEach(id => { const f = document.getElementById(id).closest('.file-field'); if (f) f.classList.remove('has-file'); });
-    pendingMeta = null; pendingElig = null; pendingCarteira = null; pendingPendPme = null; pendingPendPf = null; pendingCorretorasRaw = null; pendingEligBridge = null; pendingPropostas = null; pendingAssinatura = null; pendingCrescimentoGeral = null;
+    pendingMeta = null; pendingElig = null; pendingCarteira = null; pendingPendPme = null; pendingPendPf = null; pendingCorretorasRaw = null; pendingEligBridge = null; pendingPropostas = null; pendingAssinatura = null; pendingCrescimentoGeral = null; pendingT6140bRaw = null;
   }
 
   document.getElementById('btnOpenImport').addEventListener('click', () => {
@@ -7068,7 +7107,7 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     btn.style.cursor = 'default';
     btn.innerHTML = '<span class="spinner"></span> Processando...';
     summaryEl.style.display = 'none';
-    pendingMeta = null; pendingElig = null; pendingCarteira = null; pendingPendPme = null; pendingPendPf = null; pendingCorretorasRaw = null; pendingEligBridge = null; pendingPropostas = null; pendingAssinatura = null; pendingCrescimentoGeral = null;
+    pendingMeta = null; pendingElig = null; pendingCarteira = null; pendingPendPme = null; pendingPendPf = null; pendingCorretorasRaw = null; pendingEligBridge = null; pendingPropostas = null; pendingAssinatura = null; pendingCrescimentoGeral = null; pendingT6140bRaw = null;
     let summaryHtml = '';
     try {
       // ---- AUTO-DETECÇÃO: roteia cada arquivo pelo conteúdo, não pelo campo ----
@@ -7166,7 +7205,12 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
           const planiumRecords = parsePmePlaniumRawWorkbook(wb);
           if (planiumRecords){ planiumRawList.push(planiumRecords); continue; }
           const t6 = parseT6140bRawWorkbook(wb);
-          if (t6){ t6140bByControle = t6; continue; }
+          if (t6){
+            t6140bByControle = t6;
+            // Extrato inteiro (18 colunas) pra aba T6140B da planilha do funil — pedido do Victor, 09/10/2026.
+            pendingT6140bRaw = { nome: file.name, texto: wb.__textoCru || XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]], { FS:';' }) };
+            continue;
+          }
           pendNaoReconhecidos.push(file.name);
         }
         if (combinedWb){
@@ -7286,6 +7330,12 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     if (pendingAssinatura && window.updateAssinaturaData) window.updateAssinaturaData(pendingAssinatura.data);
     if (pendingCrescimentoGeral && window.updateConvOntemHoje) window.updateConvOntemHoje(pendingCrescimentoGeral.data);
     if ((pendingPropostas || pendingAssinatura) && window.saveDailySnapshot) window.saveDailySnapshot();
+    // T6140B inteiro: só quando o funil PME foi de fato importado junto. Fica na memória desta aba e é gravado no
+    // Firestore (seção T6140B_EXTRATO) no próximo "Publicar" — fora da lista do login, só é lido no "Baixar .xlsx".
+    if (pendingPendPme && pendingT6140bRaw){
+      window.__T6140B_EXTRATO = Object.assign({ importadoEm: new Date().toLocaleString('pt-BR', {dateStyle:'short', timeStyle:'short'}) }, pendingT6140bRaw);
+      window.__T6140B_EXTRATO_PENDENTE = true;
+    }
     const ts = new Date().toLocaleString('pt-BR', {dateStyle:'short', timeStyle:'short'});
     const el = document.getElementById('sidebarUpdatedAt'); if (el) el.textContent = ts;
     if (window.renderOverview) window.renderOverview();
@@ -7366,6 +7416,12 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
         if (!payload[k] || !Object.keys(payload[k]).length) continue;
         try { await window.fsWriteSection(k, payload[k]); }
         catch(e){ avisoMeta += ' <span style="color:var(--red); font-weight:600;">Atenção: ' + rotulos[k] + ' importado(s) NÃO foi(ram) salvo(s) (' + e.message + ').</span>'; }
+      }
+      // T6140B inteiro (pedido do Victor, 09/10/2026) — só quando um T6140B novo foi importado nesta aba; seção à parte,
+      // não lida no login. Falha aqui vira aviso: a aba T6140B da planilha só sai resumida, nada mais quebra.
+      if (window.__T6140B_EXTRATO_PENDENTE && window.__T6140B_EXTRATO){
+        try { await window.fsWriteSection('T6140B_EXTRATO', window.__T6140B_EXTRATO); window.__T6140B_EXTRATO_PENDENTE = false; }
+        catch(e){ avisoMeta += ' <span style="color:var(--red); font-weight:600;">Atenção: o extrato completo do T6140B NÃO foi salvo (' + e.message + ') — a aba T6140B do "Baixar .xlsx" vai sair resumida pra quem baixar de outro computador.</span>'; }
       }
       status.innerHTML = '<span style="color:#1b7a63; font-weight:700;">Publicado! Quem já estiver com o painel aberto vê a atualização só no próximo login/recarregamento.</span>' + avisoMeta;
     } catch(err){
