@@ -6816,14 +6816,23 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
           const carteiraForPme = pendingCarteira || window.CARTEIRA_MAP || null;
           if (!carteiraForPme){
             summaryHtml += `<div style="color:var(--red);font-size:12.5px;"><i class=ic-warn></i> Funil PME: sem Carteira carregada ainda (nem nesta importação, nem de uma anterior) — não dá pra descobrir o gestor de cada corretora. Suba a Carteira pelo menos uma vez antes.</div>`;
+          } else if (!carteiraForPme.byCnpj || !Object.keys(carteiraForPme.byCnpj).length){
+            // A Carteira guardada no painel pode ser de antes de o painel guardar o CNPJ — aí NENHUMA proposta
+            // acha gestor e as pendências seriam trocadas por uma lista vazia (aconteceu no V2 em 09/10/2026).
+            summaryHtml += `<div style="color:var(--red);font-size:12.5px;"><i class=ic-warn></i> <b>Funil PME não importado:</b> a Carteira guardada no painel é antiga e não tem o CNPJ das corretoras (é pelo CNPJ que o painel acha o gestor de cada proposta). Selecione também a Carteira (BANCO DE DADOS - COMERCIAL) no campo "Carteira / Gestores" desta mesma importação e clique em Processar de novo.</div>`;
           } else {
             const result = buildPmeFromRawFiles(planiumRawList, t6140bByControle, carteiraForPme);
+            if (!Object.keys(result.pendData.data).length){
+              // Nunca troca as pendências atuais por uma lista vazia.
+              summaryHtml += `<div style="color:var(--red);font-size:12.5px;"><i class=ic-warn></i> <b>Funil PME não importado:</b> nenhuma proposta em aberto achou um executivo conhecido (${result.totalMerged} propostas lidas). Confira se a Carteira é a mais recente e se os arquivos são os extratos do Planium e do T6140B. As pendências atuais do painel foram mantidas.</div>`;
+            } else {
             pendingPendPme = result.pendData;
             pendingPropostas = result.propostas;
             summaryHtml += diffPendPme(pendingPendPme);
             summaryHtml += diffPropostas(pendingPropostas);
             const corteBR = result.corte.split('-').reverse().join('/');
             summaryHtml += `<div style="font-size:12.5px; margin-top:6px; color:var(--blue);">Funil PME — ${result.totalArquivos} extrato(s) da Planium, ${result.totalBruto} linhas, ${result.duplicatasRemovidas} duplicada(s) removida(s) → <b>${result.totalMerged}</b> propostas.${result.finalizadasAntigas ? ` ${result.finalizadasAntigas} finalizada(s) com notificação antes de ${corteBR} não foram guardadas (o painel guarda as em aberto de qualquer data e as finalizadas dos últimos 3 meses).` : ''}${t6140bByControle ? ` T6140B: ${Object.keys(t6140bByControle).length} propostas.` : ' <b>T6140B não incluído</b> — DATA RECEBIMENTO/DITEC/CADASTRO/BITIX ficam em branco.'}</div>`;
+            }
           }
         }
         if (pendNaoReconhecidos.length){
