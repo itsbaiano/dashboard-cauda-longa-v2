@@ -859,6 +859,7 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
   let pendCurrentGestor = null;
   let pendActiveTab = 'pme';
   let pendSelectedStatuses = new Set();
+  let pendFinAberto = false; // grupo "Finalizadas" do painel de status aberto/fechado (sobrevive aos redesenhos)
   // Nome de exibição de cada "esteira" (campo de status.{campo}) — porta pro V2 o mesmo fix
   // já aplicado no V1 (2026-09-29): "PENDENTE" (Ditec) e "pendencia" (Planium) pareciam
   // duplicados nos chips, mas são esteiras diferentes.
@@ -868,6 +869,51 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     if (sep < 0) return k;
     const field = k.slice(0, sep), value = k.slice(sep+2);
     return `${value} · ${PEND_STATUS_FIELD_LABELS[field]||field}`;
+  }
+  // Planium = Bitix (pedido do Victor, 2026-10-09): os dois contam o mesmo andamento, o Bitix mais detalhado
+  // (conferido no extrato de 09/10: pendencia = DEVOLVIDA; analise = EM ANALISE / EM DIGITACAO / REANALISE /
+  // LIBERADO...; implantada = PROCESSADO; cancelada = CANCELADO). A área continua com o nome "Planium" (é o que
+  // a tabela dinâmica usa), mas o filtro mostra o status do Bitix. Os totais Em Análise / Em Pendência do
+  // Resumo continuam pelo status do Planium — só o filtro ficou mais fino.
+  //  - proposta em aberto sem Bitix = não achada no T6140B → "FORA DO T6140B";
+  //  - finalizada (só aparece se marcar) leva o status do Planium junto ("PROCESSADO · implantada"), pra não
+  //    se misturar com as 8 em aberto que já estão PROCESSADO no Bitix.
+  // Cadastro/Ditec em branco = "SEM STATUS"; "INICIADO ANÁLISE:EC625813" (login do analista colado na origem)
+  // vira um status só, "INICIADO ANÁLISE".
+  PEND_STATUS_FIELD_LABELS.amanha = 'Implanta amanhã';
+  const PEND_AMANHA_VALOR = 'Liberada em todas as áreas';
+  // (declarações de função, não const: o Resumo do Dia chama pendImplantaAmanha já na carga da página,
+  // antes desta linha rodar — function é "içada" pro topo da IIFE, const não.)
+  function pendTxt(v){ const s = String(v == null ? '' : v).trim(); return s === '0' ? '' : s; }
+  function pendSemLogin(v){ return pendTxt(v).replace(/:\s*[A-Z0-9]{5,}\s*$/i, ''); }
+  // "Implanta amanhã": Cadastro CONCLUIDO + Ditec LIBERADA + Bitix LIBERADO. Regra do sênior conferida nos
+  // extratos: das 326 assim em 07/10, 325 estavam implantadas (PROCESSADO) em 09/10.
+  function pendImplantaAmanha(p){
+    if (!p || p._extra || !p.status || typeof p.status !== 'object' || Array.isArray(p.status)) return false;
+    const s = p.status;
+    return /^CONCLU[IÍ]DO$/i.test(pendTxt(s.cadastro)) && /^LIBERADA$/i.test(pendTxt(s.ditec)) && /^LIBERADO$/i.test(pendTxt(s.bitix));
+  }
+  function pendPlaniumView(p){
+    const bi = pendTxt(p.status.bitix).toUpperCase();
+    // Finalizadas: o Planium manda (no Bitix elas se espalham — cancelada aparecia como CANCELADO, PROCESSADO,
+    // EM DIGITACAO... — e viravam 8 opções com 1 ou 2 propostas). Ficam 3, no nome do Bitix.
+    if (p._extra){
+      const pl = pendTxt(p.status.planium).toLowerCase();
+      if (pl === 'implantada') return 'PROCESSADO · implantada';
+      if (pl === 'cancelada') return 'CANCELADO · cancelada';
+      if (pl === 'devolvida') return 'DEVOLVIDA · encerrada';
+      return `${bi || 'SEM STATUS NO BITIX'} · ${pl}`;
+    }
+    return bi || 'FORA DO T6140B';
+  }
+  function pendPmeStatuses(p){
+    const out = [
+      { field:'planium', value: pendPlaniumView(p) },
+      { field:'cadastro', value: pendSemLogin(p.status.cadastro) || 'SEM STATUS' },
+      { field:'ditec', value: pendSemLogin(p.status.ditec) || 'SEM STATUS' },
+    ];
+    if (pendImplantaAmanha(p)) out.push({ field:'amanha', value: PEND_AMANHA_VALOR });
+    return out;
   }
   // Guarda o resultado filtrado do último render — "Baixar relatório" usa exatamente o que
   // está na tela (gestor + mês + corretora + status já aplicados), sem recalcular nada.
@@ -968,13 +1014,10 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     // diferentes (ex.: REANALISE no Ditec e no Bitix) viram chips distintos, nunca fundidos.
     const statusesOf = p => {
       if (Array.isArray(p.status)) return p.status.filter(v=>v && v!=='0').map(v => ({field:null, value:v}));
-      if (p.status && typeof p.status === 'object'){
-        return Object.entries(p.status).filter(([k,v])=>v && v!=='0').map(([field,value]) => ({field, value}));
-      }
+      if (p.status && typeof p.status === 'object') return pendPmeStatuses(p); // PME: Planium(Bitix)/Cadastro/Ditec/Implanta amanhã
       return (p.status && p.status !== '0') ? [{field:null, value:p.status}] : [];
     };
     const statusKey = o => (o.field ? o.field+'::' : '') + o.value;
-    const statusLabel = o => pendStatusKeyToLabel(statusKey(o));
 
     // Quantas vezes cada status aparece no recorte atual — usada pra ordenar por relevância
     // (mais frequente primeiro, dentro de cada esteira) e, no modo "todos os gestores", pra
@@ -995,35 +1038,101 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     chipList.flatMap(statusesForChips).forEach(o => { const k = statusKey(o); if (!seenKeys.has(k)){ seenKeys.add(k); statuses.push(o); } });
     pendSelectedStatuses.forEach(k => { if (!seenKeys.has(k)) pendSelectedStatuses.delete(k); });
 
-    const FIELD_ORDER = ['planium','cadastro','ditec','bitix'];
+    // "Implanta amanhã" nunca some do painel (mesmo com 0 ou 1 proposta) — por isso não passa pelo corte de
+    // "aparece 1 vez só" abaixo; ela tem área própria, desenhada à parte.
+    const amanhaKey = 'amanha::' + PEND_AMANHA_VALOR;
+    const amanhaRows = pendActiveTab === 'pme' ? pme.filter(pendImplantaAmanha) : [];
+    const amanhaVidas = amanhaRows.reduce((s,p)=>s+(p.beneficiarios||0),0);
+    const isFinalizada = o => o.field === 'planium' && o.value.indexOf(' · ') >= 0; // só existe nas extras
+    const FIELD_ORDER = ['planium','cadastro','ditec'];
     const visibleStatuses = statuses
-      .filter(o => gestorNome || statusCounts[statusKey(o)] > 1)
+      // (o corte de "aparece 1 vez só" era por causa do login colado no status — no PME isso agora é limpo
+      // em pendSemLogin, então lá mostra tudo; continua valendo pro PF)
+      .filter(o => o.field !== 'amanha' && (gestorNome || o.field || statusCounts[statusKey(o)] > 1))
       .sort((a,b) => {
         const fa = FIELD_ORDER.indexOf(a.field), fb = FIELD_ORDER.indexOf(b.field);
         if (fa !== fb) return fa - fb;
-        // No Planium, os status em aberto (análise/pendência) vêm antes dos finalizados (implantada etc.)
-        if (a.field === 'planium'){
-          const ra = /pend|analis/i.test(a.value) ? 0 : 1, rb = /pend|analis/i.test(b.value) ? 0 : 1;
-          if (ra !== rb) return ra - rb;
-        }
+        // "SEM STATUS"/"FORA DO T6140B" vão pro fim da área
+        const sa = /^(SEM STATUS|FORA DO T6140B)$/.test(a.value) ? 1 : 0, sb = /^(SEM STATUS|FORA DO T6140B)$/.test(b.value) ? 1 : 0;
+        if (sa !== sb) return sa - sb;
         return statusCounts[statusKey(b)] - statusCounts[statusKey(a)];
       });
+    // Painel por área (V1, 2026-10-07; V2 2026-10-09): áreas lado a lado na ordem da esteira, cada uma com uma
+    // frase explicando (texto provisório — Victor revisa), caixinha + quantidade de propostas e uma barrinha
+    // atrás mostrando o peso de cada status na área. No Planium, as finalizadas (devolvida, implantada,
+    // cancelada) ficam num grupo à parte — só entram na tabela quando marcadas. Lógica do filtro: OU, como antes.
+    const PEND_AREA_TEXTO = {
+      planium: 'Andamento da proposta até a implantação (status do Bitix).',
+      cadastro: 'Conferência dos dados e documentos da empresa e dos beneficiários.',
+      ditec: 'Análise da área médica/técnica (declarações de saúde).',
+    };
+    const escHtml = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    const areaNome = f => f ? (PEND_STATUS_FIELD_LABELS[f] || f) : '';
+    const itemHtml = (o, areaTot) => {
+      const k = statusKey(o), n = statusCounts[k] || 0;
+      const pct = areaTot ? Math.max(2, Math.round(n / areaTot * 100)) : 0;
+      const txt = o.value;
+      return `<label class="pst-item${/^(SEM STATUS|FORA DO T6140B)$/.test(o.value) || isFinalizada(o) ? ' rare' : ''}" style="--p:${isFinalizada(o) ? 0 : pct}"><input type="checkbox" data-status="${escHtml(k)}"${pendSelectedStatuses.has(k)?' checked':''}><span>${escHtml(txt)}</span><span class="pst-n">${n.toLocaleString('pt-BR')}</span></label>`;
+    };
     const chipsWrap = document.getElementById('pendStatusChips');
-    let lastField;
-    chipsWrap.innerHTML = visibleStatuses.map(o => {
-      const k = statusKey(o);
-      const groupLabel = (o.field && o.field !== lastField) ? `<span class="status-chip-group">${PEND_STATUS_FIELD_LABELS[o.field]||o.field}</span>` : '';
-      lastField = o.field;
-      return groupLabel + `<span class="status-chip${pendSelectedStatuses.has(k)?' active':''}" data-status="${k}">${statusLabel(o)} <span class="status-chip-count">${statusCounts[k]}</span></span>`;
-    }).join('');
-    chipsWrap.querySelectorAll('.status-chip').forEach(chip => {
-      chip.addEventListener('click', () => {
-        const k = chip.dataset.status;
-        if (pendSelectedStatuses.has(k)) pendSelectedStatuses.delete(k); else pendSelectedStatuses.add(k);
+    const campos = [...new Set(visibleStatuses.map(o => o.field))];
+    if (!visibleStatuses.length){
+      chipsWrap.className = 'pst-flow pst-simple';
+      chipsWrap.innerHTML = '<p class="pst-hint" style="margin:0">Nenhum status nesse recorte.</p>';
+    } else if (campos.length === 1 && campos[0] === null){
+      // PF: um status só por orçamento, sem áreas — lista simples.
+      const tot = visibleStatuses.reduce((s,o)=>s+(statusCounts[statusKey(o)]||0),0);
+      chipsWrap.className = 'pst-flow pst-simple';
+      chipsWrap.innerHTML = `<div class="pst-area"><div class="pst-opts">${visibleStatuses.map(o => itemHtml(o, tot)).join('')}</div></div>`;
+    } else {
+      chipsWrap.className = 'pst-flow';
+      const areas = FIELD_ORDER.filter(f => campos.includes(f)).map((f, i) => {
+        const dela = visibleStatuses.filter(o => o.field === f);
+        const normais = dela.filter(o => !isFinalizada(o)), finais = dela.filter(isFinalizada);
+        const tot = normais.reduce((s,o)=>s+(statusCounts[statusKey(o)]||0),0);
+        return `<div class="pst-area"><div class="pst-step"><span class="pst-num">${i + 1}</span><h4>${escHtml(areaNome(f))}</h4><span class="pst-step-n">${tot.toLocaleString('pt-BR')}</span></div>
+          ${PEND_AREA_TEXTO[f] ? `<p class="pst-desc">${PEND_AREA_TEXTO[f]}</p>` : ''}
+          <div class="pst-opts">${normais.map(o => itemHtml(o, tot)).join('')}</div>
+          ${finais.length ? `<details class="pst-fin"${pendFinAberto || finais.some(o => pendSelectedStatuses.has(statusKey(o))) ? ' open' : ''}><summary>Finalizadas <span class="pst-fin-sub">· só aparecem se marcar</span></summary><div class="pst-opts">${finais.map(o => itemHtml(o, 0)).join('')}</div></details>` : ''}
+          ${normais.length > 1 ? `<button type="button" class="pst-all" data-field="${escHtml(f)}">Marcar todos de ${escHtml(areaNome(f))}</button>` : ''}</div>`;
+      });
+      if (pendActiveTab === 'pme'){
+        areas.push(`<div class="pst-area amanha"><div class="pst-step"><span class="pst-num">${areas.length + 1}</span><h4>Implanta amanhã</h4></div>
+          <p class="pst-desc">Liberada em todas as áreas — Cadastro CONCLUIDO, Ditec LIBERADA e Planium LIBERADO. Implanta no dia seguinte.</p>
+          <div class="pst-big"><b>${amanhaVidas.toLocaleString('pt-BR')}</b><span>${amanhaVidas === 1 ? 'vida' : 'vidas'} em ${amanhaRows.length} ${amanhaRows.length === 1 ? 'proposta' : 'propostas'}</span></div>
+          <label class="pst-switch"><input type="checkbox" data-status="${escHtml(amanhaKey)}"${pendSelectedStatuses.has(amanhaKey)?' checked':''}${amanhaRows.length ? '' : ' disabled'}><span>${amanhaRows.length ? 'Mostrar só essas propostas' : 'Nenhuma neste recorte'}</span></label></div>`);
+      }
+      chipsWrap.innerHTML = areas.join('');
+    }
+    chipsWrap.querySelectorAll('input[type=checkbox]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const k = cb.dataset.status;
+        if (cb.checked) pendSelectedStatuses.add(k); else pendSelectedStatuses.delete(k);
         renderPendencias();
       });
     });
-    document.getElementById('pendStatusClear').style.display = pendSelectedStatuses.size ? '' : 'none';
+    chipsWrap.querySelectorAll('details.pst-fin').forEach(d => d.addEventListener('toggle', () => { pendFinAberto = d.open; }));
+    chipsWrap.querySelectorAll('.pst-all').forEach(btn => {
+      btn.addEventListener('click', () => {
+        visibleStatuses.filter(o => o.field === btn.dataset.field && !isFinalizada(o)).forEach(o => pendSelectedStatuses.add(statusKey(o)));
+        renderPendencias();
+      });
+    });
+    // Etiquetas dos status marcados (só a que acabou de entrar anima) + resumo no botão
+    const ativos = document.getElementById('pendStatusAtivos');
+    const keysAntes = new Set([...ativos.querySelectorAll('button[data-status]')].map(b => b.dataset.status));
+    ativos.innerHTML = [...pendSelectedStatuses].map(k => {
+      const sep = k.indexOf('::'), f = sep >= 0 ? k.slice(0, sep) : null, v = sep >= 0 ? k.slice(sep + 2) : k;
+      return `<span class="pst-tag${f === 'amanha' ? ' amanha' : ''}${keysAntes.has(k) ? '' : ' new'}">${f ? `<span class="pst-tag-area">${escHtml(areaNome(f))} ·</span> ` : ''}${escHtml(v)}<button type="button" aria-label="Tirar o status ${escHtml(v)}" data-status="${escHtml(k)}">×</button></span>`;
+    }).join('');
+    ativos.querySelectorAll('button[data-status]').forEach(b => b.addEventListener('click', () => { pendSelectedStatuses.delete(b.dataset.status); renderPendencias(); }));
+    const nSel = pendSelectedStatuses.size;
+    document.getElementById('pendStatusResumo').textContent = nSel ? (nSel === 1 ? '1 status marcado' : nSel + ' status marcados') : 'Todos os status';
+    document.getElementById('pendStatusBtn').classList.toggle('on', nSel > 0);
+    document.getElementById('pendStatusHint').textContent = pendActiveTab === 'pme'
+      ? 'A proposta passa pelas áreas nessa ordem. Marque o que quer ver; os números mostram quantas propostas estão em cada situação.'
+      : 'Marque o que quer ver; os números mostram quantos orçamentos estão em cada situação.';
+    document.getElementById('pendStatusClear').style.display = nSel ? '' : 'none';
 
     // Busca por número — texto livre, casa parcialmente (contém), ignora espaços nas pontas.
     // Proposta (PME) e Orçamento (PF) são campos diferentes, mas o mesmo campo de busca serve
@@ -1033,7 +1142,7 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     // Extras só entram quando o status do Planium delas está marcado; as em aberto seguem a regra de sempre.
     // (busca por nº sem status marcado também acha as extras — ex.: "essa proposta já foi implantada?")
     const pmeStatusOk = p => p._extra
-      ? (pendActiveTab === 'pme' && (pendSelectedStatuses.has('planium::' + p.status.planium) || (!!searchRaw && pendSelectedStatuses.size === 0)))
+      ? (pendActiveTab === 'pme' && (pendSelectedStatuses.has('planium::' + pendPlaniumView(p)) || (!!searchRaw && pendSelectedStatuses.size === 0)))
       : (pendActiveTab !== 'pme' || pendSelectedStatuses.size === 0 || statusesOf(p).some(o=>pendSelectedStatuses.has(statusKey(o))));
     const pmeFiltered = pmeComExtras.filter(p => (!activeMonth || pendMonthOf(p.dataVigencia) === activeMonth) && (!activeCorretora || p.corretora === activeCorretora) && pmeStatusOk(p) && (!searchRaw || String(p.proposta||'').toLowerCase().indexOf(searchRaw) >= 0))
       .sort((a,b) => pendSortDir * ((a.beneficiarios||0) - (b.beneficiarios||0)));
@@ -1056,8 +1165,8 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     document.getElementById('pendBeneficiariosTotal').textContent = `Total de beneficiários (filtro atual): ${beneficiariosTotal}`;
     document.getElementById('pendPmeBody').innerHTML = pmeFiltered.length ? pmeFiltered.map(p => `
       <tr><td>${p.proposta}</td><td class="name">${p.corretora}</td>${showGestorCol?`<td>${p._gestor||''}</td>`:''}<td>
-        ${p.status.planium ? `<span class="tag ${p.status.planium==='pendencia'?'react':'noelig'}">${p.status.planium}</span>` : ''}
-        <div style="font-size:10.5px; color:var(--muted); margin-top:4px; line-height:1.6;">${['cadastro','ditec','bitix'].filter(k=>p.status[k] && p.status[k]!=='0').map(k=>`${k.charAt(0).toUpperCase()+k.slice(1)}: <b>${p.status[k]}</b>`).join(' · ')}</div>
+        <span class="tag ${p.status.planium==='pendencia'?'react':'noelig'}" title="Planium: ${p.status.planium||'—'}">${pendPlaniumView(p)}</span>${pendImplantaAmanha(p) ? '<span class="pend-amanha">Implanta amanhã</span>' : ''}
+        <div style="font-size:10.5px; color:var(--muted); margin-top:4px; line-height:1.6;">${['cadastro','ditec'].filter(k=>pendTxt(p.status[k])).map(k=>`${k.charAt(0).toUpperCase()+k.slice(1)}: <b>${pendSemLogin(p.status[k])}</b>`).join(' · ')}</div>
       </td><td class="num">${p.beneficiarios}</td><td>${p.dataReceb}</td><td>${p.dataVigencia}</td></tr>
     `).join('') : `<tr><td colspan="${showGestorCol?7:6}" style="text-align:center;color:var(--muted);padding:16px;">Nenhuma pendência PME/SS para este filtro.</td></tr>`;
     document.getElementById('pendPfBody').innerHTML = pfFiltered.length ? pfFiltered.map(p => `
@@ -1065,7 +1174,17 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     `).join('') : `<tr><td colspan="${showGestorCol?6:5}" style="text-align:center;color:var(--muted);padding:16px;">Nenhuma pendência PF para este filtro.</td></tr>`;
   }
 
-  window.showPendenciasModal = function(gestorNome){
+  // Painel de status: abre/fecha animado (classe .open; .just-opened só na abertura, pra as áreas entrarem
+  // uma vez — os cliques nas caixinhas redesenham o conteúdo e não devem reanimar nada).
+  function pendStatusPanelSet(abrir){
+    const wrap = document.getElementById('pendStatusPanel'), btn = document.getElementById('pendStatusBtn');
+    wrap.classList.toggle('open', abrir);
+    btn.setAttribute('aria-expanded', String(abrir));
+    if (abrir){ wrap.classList.add('just-opened'); clearTimeout(pendStatusPanelSet._t); pendStatusPanelSet._t = setTimeout(() => wrap.classList.remove('just-opened'), 500); }
+  }
+  document.getElementById('pendStatusBtn').addEventListener('click', () => pendStatusPanelSet(!document.getElementById('pendStatusPanel').classList.contains('open')));
+
+  window.showPendenciasModal = function(gestorNome, opts){
     // Aceita tanto o nome "bonito" (ex.: "Pablo Amora", como vem do Desempenho Comercial)
     // quanto o nome cru da planilha (ex.: "PABLO SERGIO RIBEIRO AMORA", como a aba Conversão
     // usa, vindo do PLANIUM) — quem normaliza/junta as duas variantes é pendenciasDoGestor(),
@@ -1081,6 +1200,9 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     document.getElementById('pendCorretoraFilter').value = '';
     document.getElementById('pendPropostaSearch').value = '';
     pendSelectedStatuses.clear();
+    // opts.amanha: veio do cartão "Implanta amanhã" do Resumo do Dia — já abre filtrado nisso.
+    if (opts && opts.amanha) pendSelectedStatuses.add('amanha::' + PEND_AMANHA_VALOR);
+    pendStatusPanelSet(false);
     renderPendencias();
     document.getElementById('pendModalOverlay').style.display = 'flex';
   };
@@ -1133,17 +1255,16 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     const total = rows.reduce((s,p)=>s+(isPme?(p.beneficiarios||0):(p.vidas||0)), 0);
     const mesFiltroTxt = document.getElementById('pendMonthFilter').value || 'Todos os meses';
     const corFiltroTxt = document.getElementById('pendCorretoraFilter').value || 'Todas as corretoras';
-    const stsFiltroTxt = pendSelectedStatuses.size ? [...pendSelectedStatuses].join(', ') : 'Todos os status';
+    const stsFiltroTxt = pendSelectedStatuses.size ? [...pendSelectedStatuses].map(pendStatusKeyToLabel).join(', ') : 'Todos os status';
 
     const linhas = isPme ? rows.map(p => `<tr>
       <td>${esc(p.proposta)}</td>
       <td>${esc(p.corretora)}</td>
       <td class="c">${dataBR(p.dataReceb)}</td>
       <td class="c">${dataBR(p.dataVigencia)}</td>
-      <td class="c"><span class="st" style="color:${stColor(p.status.planium)};border-color:${stColor(p.status.planium)}33;background:${stColor(p.status.planium)}14;">${esc(p.status.planium)||'—'}</span></td>
-      <td class="c">${esc(p.status.cadastro) || '—'}</td>
-      <td class="c">${esc(p.status.ditec) || '—'}</td>
-      <td class="c">${esc(p.status.bitix) || '—'}</td>
+      <td class="c"><span class="st" style="color:${stColor(pendPlaniumView(p))};border-color:${stColor(pendPlaniumView(p))}33;background:${stColor(pendPlaniumView(p))}14;">${esc(pendPlaniumView(p))}</span>${pendImplantaAmanha(p) ? '<div class="am">Implanta amanhã</div>' : ''}</td>
+      <td class="c">${esc(pendSemLogin(p.status.cadastro)) || '—'}</td>
+      <td class="c">${esc(pendSemLogin(p.status.ditec)) || '—'}</td>
       <td class="c b">${p.beneficiarios||0}</td>
     </tr>`).join('') : rows.map(p => `<tr>
       <td>${esc(p.orcamento)}</td>
@@ -1153,9 +1274,9 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
       <td class="c b">${p.vidas||0}</td>
     </tr>`).join('');
     const headers = isPme
-      ? `<th style="width:10%">Proposta</th><th style="width:23%">Corretora</th><th style="width:10%;text-align:center">Recebido</th><th style="width:10%;text-align:center">Vigência</th><th style="width:14%;text-align:center">Planium</th><th style="width:12%;text-align:center">Cadastro</th><th style="width:8%;text-align:center">DITEC</th><th style="width:8%;text-align:center">BITIX</th><th style="width:5%;text-align:center">Vidas</th>`
+      ? `<th style="width:10%">Proposta</th><th style="width:25%">Corretora</th><th style="width:10%;text-align:center">Recebido</th><th style="width:10%;text-align:center">Vigência</th><th style="width:17%;text-align:center">Planium</th><th style="width:13%;text-align:center">Cadastro</th><th style="width:10%;text-align:center">DITEC</th><th style="width:5%;text-align:center">Vidas</th>`
       : `<th style="width:13%">Orçamento</th><th style="width:32%">Corretora</th><th style="width:17%;text-align:center">Data Status</th><th style="width:20%;text-align:center">Status</th><th style="width:8%;text-align:center">Vidas</th>`;
-    const colspanTotal = isPme ? 8 : 4;
+    const colspanTotal = isPme ? 7 : 4;
 
     const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Relatório de Pendências ${isPme?'PME':'PF'} — ${esc(pendCurrentGestor)}</title>
 <style>
@@ -1176,6 +1297,7 @@ th{background:#101E63;color:#fff;font-size:7px;text-transform:uppercase;letter-s
 td{padding:4px;border-bottom:1px solid #E8EDF7;font-size:8px;overflow-wrap:break-word}
 tr:nth-child(even) td{background:#F8FAFF}
 td.c{text-align:center}td.b{font-weight:700}
+.am{margin-top:2px;font-size:6.5px;font-weight:800;color:#16B87A;text-transform:uppercase;letter-spacing:.3px}
 .st{display:inline-block;padding:1px 5px;border-radius:20px;border:1px solid;font-size:7px;font-weight:700;text-transform:capitalize;white-space:nowrap}
 tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #1D33A8}
 .ft{margin-top:12px;font-size:7.5px;color:#8B93B8;border-top:1px solid #E3E9F8;padding-top:6px;display:flex;justify-content:space-between}
@@ -1275,13 +1397,14 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
   // já usada na tabela de Pendências PME, só agregada por gestor em vez de listada linha a linha.
   function resumoPmeStats(gestorNome){
     const rows = PENDENCIAS_PME[gestorNome] || [];
-    let analise = 0, pendencia = 0;
+    let analise = 0, pendencia = 0, amanha = 0, amanhaProps = 0;
     rows.forEach(p => {
       const v = p.beneficiarios || 0;
       if (p.status && p.status.planium === 'analise') analise += v;
       else if (p.status && p.status.planium === 'pendencia') pendencia += v;
+      if (pendImplantaAmanha(p)){ amanha += v; amanhaProps++; }
     });
-    return { funil: analise + pendencia, analise, pendencia };
+    return { funil: analise + pendencia, analise, pendencia, amanha, amanhaProps };
   }
 
   // Soma PME (funil todo) + PF (só status ainda em andamento, ver PF_STATUS_PENDENTE) pro
@@ -1312,6 +1435,7 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
           <div class="rc-stat"><div class="rc-label">Em Funil</div><div class="rc-value" style="color:var(--navy);">${s.funil}</div></div>
           <div class="rc-stat"><div class="rc-label">Em Análise</div><div class="rc-value" style="color:var(--primary-light);">${s.analise}</div></div>
           <div class="rc-stat"><div class="rc-label">Em Pendência</div><div class="rc-value" style="color:#FFB81C;">${s.pendencia}</div></div>
+          <div class="rc-stat"><div class="rc-label">Implanta amanhã</div><div class="rc-value" style="color:${s.amanha ? 'var(--green)' : 'var(--muted)'};">${s.amanha}</div></div>
         </div>
       </div>`;
     }).join('');
@@ -1335,7 +1459,19 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
     const gestores = resumoGestoresFiltrados();
     if (resumoActiveTab === 'pme') renderResumoPme(gestores); else renderResumoPf(gestores);
     renderResumoTotalBar(gestores);
+    // Cartão "Implanta amanhã" — soma dos gestores do filtro de Equipe/Gestor atual
+    let vidas = 0, props = 0;
+    gestores.forEach(g => { const s = resumoPmeStats(g); vidas += s.amanha; props += s.amanhaProps; });
+    document.getElementById('rsAmanhaVidas').textContent = fmt0(vidas);
+    document.getElementById('rsAmanhaSub').textContent = props
+      ? `${props} ${props === 1 ? 'proposta liberada' : 'propostas liberadas'} em todas as áreas (PME) · clique pra ver`
+      : 'Nenhuma proposta liberada em todas as áreas (PME)';
   }
+  document.getElementById('btnImplantaAmanha').addEventListener('click', () => {
+    const gestores = resumoGestoresFiltrados();
+    document.getElementById('resumoModalOverlay').style.display = 'none';
+    window.showPendenciasModal(gestores.length === 1 ? gestores[0] : null, { amanha: true });
+  });
 
   // Clique num card/linha do Resumo do Dia leva pro popup detalhado que já existe no Desempenho
   // Comercial (mesma tabela de propostas/orçamentos por gestor) — reaproveita window.showPendenciasModal
