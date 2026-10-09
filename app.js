@@ -1353,8 +1353,9 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
   // (2) liberado pra todos os perfis (ele já manda a planilha manual no grupo geral); (3) duas abas:
   //  - RESULTADO FINAL: mesmas colunas da aba de mesmo nome do "RELATORIO PME AUTOMATIZADO" (menos OPERADORA, que o
   //    painel não guarda) + IMPLANTA AMANHÃ + EMPRESA;
-  //  - DINÂMICA: gestor × status do Bitix (vidas), com SOMASES/CONT.SES apontando pra aba RESULTADO FINAL — se ele
-  //    apagar/editar linhas na planilha, a dinâmica acompanha.
+  //  - DINÂMICA e ESTEIRA DITEC: tabelas dinâmicas de verdade (2ª versão, 09/10 — a 1ª era com fórmulas e o duplo
+  //    clique não abria os detalhes), montadas igual à planilha original — ver pendAddPivots;
+  //  - PLANIUM e T6140B: os campos que o painel guarda de cada extrato (base inteira).
   let pendExcelJsPromise = null;
   function pendLoadExcelJS(){
     if (window.ExcelJS) return Promise.resolve(window.ExcelJS);
@@ -1369,6 +1370,88 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
     }
     return pendExcelJsPromise;
   }
+  // Tabelas dinâmicas REAIS no .xlsx (o ExcelJS 4.4.0 do cdnjs não cria): abre o arquivo gerado (zip), acrescenta
+  // um "cache" que aponta pra aba de origem + uma definição de tabela dinâmica por aba, com refreshOnLoad — o Excel
+  // monta as tabelas ao abrir (ou ao clicar em "Habilitar Edição", se o arquivo abrir no Modo de Exibição Protegido).
+  // Duplo clique num valor abre os detalhes, como numa dinâmica feita à mão. Testado no Excel em 09/10/2026.
+  //   opt = { sourceSheet, headers:[...], rows:[[...]] (datas como 'aaaa-mm-dd'),
+  //           pivots:[{ sheetIndex (nº do arquivo sheetN.xml), name, row, col, pages:[...], data, dataName, rowCaption }] }
+  let pendJsZipPromise = null;
+  function pendLoadJsZip(){
+    if (window.JSZip) return Promise.resolve(window.JSZip);
+    if (!pendJsZipPromise){
+      pendJsZipPromise = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+        s.onload = () => window.JSZip ? resolve(window.JSZip) : reject(new Error('JSZip não carregou'));
+        s.onerror = () => { pendJsZipPromise = null; reject(new Error('Falha ao baixar a biblioteca de compactação')); };
+        document.head.appendChild(s);
+      });
+    }
+    return pendJsZipPromise;
+  }
+  async function pendAddPivots(buf, opt){
+    const JSZip = await pendLoadJsZip();
+    const esc = v => String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    const colL = n => { let s=''; while (n > 0){ const m = (n-1) % 26; s = String.fromCharCode(65+m) + s; n = Math.floor((n-1)/26); } return s; };
+    const zip = await JSZip.loadAsync(buf);
+    const H = opt.headers, R = opt.rows, nCols = H.length;
+    const usados = new Set();
+    opt.pivots.forEach(p => { usados.add(p.row); usados.add(p.col); (p.pages||[]).forEach(f => usados.add(f)); });
+    const itens = {};
+    const cacheFields = H.map((h, i) => {
+      const vals = R.map(r => r[i]);
+      if (usados.has(h)){
+        const temVazio = vals.some(v => v === '' || v == null);
+        itens[h] = [...new Set(vals.filter(v => v !== '' && v != null).map(String))].sort().concat(temVazio ? [null] : []);
+        return `<cacheField name="${esc(h)}" numFmtId="0"><sharedItems${temVazio ? ' containsBlank="1"' : ''} count="${itens[h].length}">${itens[h].map(v => v === null ? '<m/>' : `<s v="${esc(v)}"/>`).join('')}</sharedItems></cacheField>`;
+      }
+      const nums = vals.filter(v => typeof v === 'number');
+      if (nums.length && nums.length === vals.length){
+        let mn = Infinity, mx = -Infinity; nums.forEach(v => { if (v < mn) mn = v; if (v > mx) mx = v; });
+        return `<cacheField name="${esc(h)}" numFmtId="0"><sharedItems containsSemiMixedTypes="0" containsString="0" containsNumber="1" containsInteger="1" minValue="${mn}" maxValue="${mx}"/></cacheField>`;
+      }
+      return `<cacheField name="${esc(h)}" numFmtId="0"><sharedItems/></cacheField>`;
+    });
+    const XML = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+    const NS = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"';
+    const REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+    zip.file('xl/pivotCache/pivotCacheDefinition1.xml', `${XML}<pivotCacheDefinition ${NS} xmlns:r="${REL}" saveData="0" refreshOnLoad="1" createdVersion="6" refreshedVersion="6" minRefreshableVersion="3" recordCount="0"><cacheSource type="worksheet"><worksheetSource ref="A1:${colL(nCols)}${R.length + 1}" sheet="${esc(opt.sourceSheet)}"/></cacheSource><cacheFields count="${nCols}">${cacheFields.join('')}</cacheFields></pivotCacheDefinition>`);
+    let ct = await zip.file('[Content_Types].xml').async('string');
+    let wbx = await zip.file('xl/workbook.xml').async('string');
+    let wbr = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+    ct = ct.replace('</Types>', '<Override PartName="/xl/pivotCache/pivotCacheDefinition1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheDefinition+xml"/></Types>');
+    wbr = wbr.replace('</Relationships>', `<Relationship Id="rIdPivotCache1" Type="${REL}/pivotCacheDefinition" Target="pivotCache/pivotCacheDefinition1.xml"/></Relationships>`);
+    if (!/<workbook[^>]*xmlns:r=/.test(wbx)) wbx = wbx.replace('<workbook ', `<workbook xmlns:r="${REL}" `);
+    wbx = wbx.replace('</workbook>', '<pivotCaches><pivotCache cacheId="1" r:id="rIdPivotCache1"/></pivotCaches></workbook>');
+    for (let k = 0; k < opt.pivots.length; k++){
+      const p = opt.pivots[k], n = k + 1, pages = p.pages || [];
+      const idx = h => H.indexOf(h);
+      const fields = H.map(h => {
+        const its = itens[h];
+        const itemsXml = its ? `<items count="${its.length + 1}">${its.map((_, i) => `<item x="${i}"/>`).join('')}<item t="default"/></items>` : '';
+        if (h === p.row) return `<pivotField axis="axisRow" showAll="0">${itemsXml}</pivotField>`;
+        if (h === p.col) return `<pivotField axis="axisCol" showAll="0">${itemsXml}</pivotField>`;
+        if (pages.includes(h)) return `<pivotField axis="axisPage" showAll="0">${itemsXml}</pivotField>`;
+        if (h === p.data) return '<pivotField dataField="1" showAll="0"/>';
+        return its ? `<pivotField showAll="0">${itemsXml}</pivotField>` : '<pivotField showAll="0"/>';
+      });
+      const r0 = pages.length ? pages.length + 2 : 1;
+      zip.file(`xl/pivotTables/pivotTable${n}.xml`, `${XML}<pivotTableDefinition ${NS} name="${esc(p.name)}" cacheId="1" applyNumberFormats="0" applyBorderFormats="0" applyFontFormats="0" applyPatternFormats="0" applyAlignmentFormats="0" applyWidthHeightFormats="1" dataCaption="Valores" updatedVersion="6" minRefreshableVersion="3" useAutoFormatting="1" itemPrintTitles="1" createdVersion="6" indent="0" outline="1" outlineData="1" multipleFieldFilters="0" rowHeaderCaption="${esc(p.rowCaption || p.row)}"><location ref="A${r0}:B${r0 + 2}" firstHeaderRow="1" firstDataRow="2" firstDataCol="1"${pages.length ? ` rowPageCount="${pages.length}" colPageCount="1"` : ''}/><pivotFields count="${nCols}">${fields.join('')}</pivotFields><rowFields count="1"><field x="${idx(p.row)}"/></rowFields><colFields count="1"><field x="${idx(p.col)}"/></colFields>${pages.length ? `<pageFields count="${pages.length}">${pages.map(h => `<pageField fld="${idx(h)}" hier="-1"/>`).join('')}</pageFields>` : ''}<dataFields count="1"><dataField name="${esc(p.dataName)}" fld="${idx(p.data)}" baseField="0" baseItem="0" numFmtId="3"/></dataFields><pivotTableStyleInfo name="PivotStyleMedium2" showRowHeaders="1" showColHeaders="1" showRowStripes="0" showColStripes="0" showLastColumn="1"/></pivotTableDefinition>`);
+      zip.file(`xl/pivotTables/_rels/pivotTable${n}.xml.rels`, `${XML}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${REL}/pivotCacheDefinition" Target="../pivotCache/pivotCacheDefinition1.xml"/></Relationships>`);
+      ct = ct.replace('</Types>', `<Override PartName="/xl/pivotTables/pivotTable${n}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml"/></Types>`);
+      const relPath = `xl/worksheets/_rels/sheet${p.sheetIndex}.xml.rels`;
+      const rel = `<Relationship Id="rIdPivot${n}" Type="${REL}/pivotTable" Target="../pivotTables/pivotTable${n}.xml"/>`;
+      zip.file(relPath, zip.file(relPath)
+        ? (await zip.file(relPath).async('string')).replace('</Relationships>', rel + '</Relationships>')
+        : `${XML}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rel}</Relationships>`);
+    }
+    zip.file('[Content_Types].xml', ct);
+    zip.file('xl/workbook.xml', wbx);
+    zip.file('xl/_rels/workbook.xml.rels', wbr);
+    return zip.generateAsync({ type:'blob', mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', compression:'DEFLATE' });
+  }
+
   async function pendBaixarXlsx(){
     const rows = pendLastPmeFiltered.slice();
     if (!rows.length) return;
@@ -1389,6 +1472,10 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
       const NAVY = 'FF101E63', VERDE = 'FF16B87A', CINZA = 'FFE3E9F8';
       const borda = { top:{style:'thin',color:{argb:CINZA}}, bottom:{style:'thin',color:{argb:CINZA}}, left:{style:'thin',color:{argb:CINZA}}, right:{style:'thin',color:{argb:CINZA}} };
       const estiloCab = cell => { cell.font = { bold:true, color:{argb:'FFFFFFFF'}, size:10 }; cell.fill = { type:'pattern', pattern:'solid', fgColor:{argb:NAVY} }; cell.alignment = { vertical:'middle', horizontal:'center', wrapText:true }; cell.border = borda; };
+
+      // As duas tabelas dinâmicas vêm primeiro — viram os arquivos sheet1/sheet2 do .xlsx, onde pendAddPivots as liga.
+      const wd = wb.addWorksheet('DINÂMICA');
+      const we = wb.addWorksheet('ESTEIRA DITEC');
 
       // ---- aba RESULTADO FINAL ----
       const ws = wb.addWorksheet('RESULTADO FINAL', { views:[{ state:'frozen', ySplit:1 }] });
@@ -1415,68 +1502,59 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
       ws.autoFilter = { from:{ row:1, column:1 }, to:{ row:1, column:COLS.length } };
       const nBase = rows.length + 1; // última linha de dados
 
-      // ---- aba DINÂMICA: gestor × status do Bitix (vidas) ----
-      const wd = wb.addWorksheet('DINÂMICA', { views:[{ state:'frozen', xSplit:1, ySplit:3 }] });
-      const gestores = [...new Set(rows.map(gestorDe))].sort();
-      const ordemBitix = ['EM DIGITACAO','EM ANALISE','REANALISE','9 NAO PROCESSADO COM CRITICA','DEVOLVIDA','LIBERADO','PROCESSADO','CANCELADO'];
-      const statusSet = [...new Set(rows.map(p => pendTxt(p.status.bitix) || '(sem status no Bitix)'))];
-      statusSet.sort((a,b) => { const ia = ordemBitix.indexOf(a), ib = ordemBitix.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b); });
+      // ---- DINÂMICA / ESTEIRA DITEC: tabelas dinâmicas DE VERDADE (pedido do Victor, 09/10: com fórmulas o duplo
+      // clique não abria os detalhes). Mesma montagem da planilha original: DINÂMICA = GESTOR × PLANIUM, soma de
+      // BENEFICIARIOS (+ filtros IMPLANTA AMANHÃ e BITIX); ESTEIRA DITEC = GESTOR × DITEC com filtros DATA VIGÊNCIA,
+      // CADASTRO e BITIX. As duas leem a aba RESULTADO FINAL e o Excel as monta ao abrir (pendAddPivots).
       const filtros = [
         document.getElementById('pendGestorFilter').value || 'Todos os gestores',
         document.getElementById('pendMonthFilter').value ? 'vigência ' + document.getElementById('pendMonthFilter').value : 'todos os meses',
         document.getElementById('pendCorretoraFilter').value || 'todas as corretoras',
         pendSelectedStatuses.size ? [...pendSelectedStatuses].map(pendStatusKeyToLabel).join(', ') : 'todos os status',
       ];
-      wd.getCell(1,1).value = 'Funil PME — vidas por gestor e status do Bitix';
-      wd.getCell(1,1).font = { bold:true, size:13, color:{ argb:NAVY } };
-      wd.getCell(2,1).value = 'Filtro: ' + filtros.join(' · ') + ' · gerado em ' + new Date().toLocaleString('pt-BR');
-      wd.getCell(2,1).font = { italic:true, size:9, color:{ argb:'FF56608F' } };
-      const cab = ['GESTOR', 'PROPOSTAS', 'VIDAS', ...statusSet, 'IMPLANTA AMANHÃ'];
-      cab.forEach((h,i) => { const c = wd.getCell(3, i+1); c.value = h; estiloCab(c); });
-      wd.getRow(3).height = 42;
-      wd.getColumn(1).width = 36; wd.getColumn(2).width = 11; wd.getColumn(3).width = 10;
-      statusSet.forEach((_,i) => { wd.getColumn(4+i).width = 13; });
-      wd.getColumn(4 + statusSet.length).width = 13;
-      const rng = col => `'RESULTADO FINAL'!$${col}$2:$${col}$${nBase}`;
-      const colLetra = n => { let s=''; while (n > 0){ const m = (n-1) % 26; s = String.fromCharCode(65+m) + s; n = Math.floor((n-1)/26); } return s; };
-      const vidasDe = (g, fn) => rows.filter(p => gestorDe(p) === g && fn(p)).reduce((s,p)=>s+(p.beneficiarios||0),0);
-      gestores.forEach((g, i) => {
-        const r = 4 + i;
-        wd.getCell(r,1).value = g;
-        wd.getCell(r,2).value = { formula:`COUNTIFS(${rng('B')},$A${r})`, result: rows.filter(p => gestorDe(p) === g).length };
-        wd.getCell(r,3).value = { formula:`SUMIFS(${rng('C')},${rng('B')},$A${r})`, result: vidasDe(g, () => true) };
-        statusSet.forEach((st, j) => {
-          const crit = st === '(sem status no Bitix)' ? '""' : `${colLetra(4+j)}$3`;
-          wd.getCell(r, 4+j).value = { formula:`SUMIFS(${rng('C')},${rng('B')},$A${r},${rng('H')},${crit})`, result: vidasDe(g, p => (pendTxt(p.status.bitix) || '(sem status no Bitix)') === st) };
-        });
-        wd.getCell(r, 4+statusSet.length).value = { formula:`SUMIFS(${rng('C')},${rng('B')},$A${r},${rng('M')},"SIM")`, result: vidasDe(g, pendImplantaAmanha) };
-      });
-      const rTot = 4 + gestores.length;
-      wd.getCell(rTot,1).value = 'TOTAL';
-      for (let c = 2; c <= cab.length; c++){
-        const L = colLetra(c);
-        const res = gestores.reduce((s,_,i) => s + (wd.getCell(4+i, c).value.result || 0), 0);
-        wd.getCell(rTot, c).value = { formula:`SUM(${L}4:${L}${rTot-1})`, result: res };
-      }
-      for (let r = 4; r <= rTot; r++){
-        for (let c = 1; c <= cab.length; c++){
-          const cell = wd.getCell(r,c);
-          cell.border = borda;
-          if (c > 1){ cell.alignment = { horizontal:'center' }; cell.numFmt = '#,##0;-#,##0;""'; }
-          if (r === rTot){ cell.font = { bold:true, color:{ argb:'FFFFFFFF' } }; cell.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:NAVY } }; }
-          else if (c === cab.length){ cell.font = { bold:true, color:{ argb:VERDE } }; }
-          else if (r % 2 === 1){ cell.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFF5F7FE' } }; }
-        }
-      }
-      // a dinâmica abre primeiro
-      wb.views = [{ activeTab: 1 }];
-      wb.worksheets.forEach(s => { s.properties.tabColor = { argb: s.name === 'DINÂMICA' ? VERDE : NAVY }; });
+      const nota = (sh, col) => {
+        sh.getCell(1, col).value = 'Filtro do painel: ' + filtros.join(' · ');
+        sh.getCell(2, col).value = 'Gerado em ' + new Date().toLocaleString('pt-BR') + '. Se a tabela aparecer vazia, clique em "Habilitar Edição".';
+        [1,2].forEach(r => { sh.getCell(r, col).font = { italic:true, size:9, color:{ argb:'FF56608F' } }; });
+      };
+      wd.getColumn(1).width = 36; we.getColumn(1).width = 36;
+      nota(wd, 10); nota(we, 12);
+
+      // ---- abas PLANIUM e T6140B: os campos que o painel guarda de cada extrato (o extrato cru não fica guardado —
+      // decisão do Victor 09/10, pra não deixar login/download mais lentos). Base inteira guardada, não só o filtro.
+      const props = (window.getPropostasData ? window.getPropostasData() : []).slice()
+        .sort((a,b) => String(a.g||'').localeCompare(String(b.g||'')) || String(a.p).localeCompare(String(b.p)));
+      const numOuTxt = v => /^\d+$/.test(String(v)) ? Number(v) : (v || '');
+      const montaAba = (nome, cols, linhas, datas) => {
+        const sh = wb.addWorksheet(nome, { views:[{ state:'frozen', ySplit:1 }] });
+        sh.columns = cols.map(([h,w]) => ({ header:h, width:w }));
+        sh.getRow(1).height = 28; sh.getRow(1).eachCell(estiloCab);
+        linhas.forEach(l => { const r = sh.addRow(l); datas.forEach(c => { r.getCell(c).numFmt = 'dd/mm/yyyy'; }); });
+        sh.autoFilter = { from:{ row:1, column:1 }, to:{ row:1, column:cols.length } };
+        return sh;
+      };
+      montaAba('PLANIUM', [['oper_propnum',13], ['contratante_nome',42], ['contratante_cnpj',20], ['data_notificada',14], ['date_vigencia',13],
+        ['beneficiarios',12], ['status',12], ['corretora_nome',42], ['vendedor_nome',34], ['GESTOR',34], ['DATA RECEBIMENTO',15], ['DITEC',16], ['CADASTRO',20]],
+        props.map(p => [numOuTxt(p.p), p.em || '', p.cn || '', dataXl(p.dn), dataXl(p.vg), p.bn || 0, p.st || '', p.co || '', p.vd || '',
+                         String(p.g || '').toUpperCase(), dataXl(p.dr), p.di || '', p.ca || '']), [4,5,11]);
+      montaAba('T6140B', [['NU_CONTROLE',13], ['DT_RECEBIMENTO',15], ['STATUS_AREA_MÉDICA',20], ['STATUS_CADASTRO',22], ['STATUS_PROPOSTA_BITIX',26]],
+        props.filter(p => p.dr || p.di || p.ca || p.bi).map(p => [numOuTxt(p.p), dataXl(p.dr), p.di || '', p.ca || '', p.bi || '']), [2]);
+
+      wb.views = [{ activeTab: 0 }];
+      wb.worksheets.forEach(s => { s.properties.tabColor = { argb: /DINÂMICA|ESTEIRA/.test(s.name) ? VERDE : NAVY }; });
 
       const buf = await wb.xlsx.writeBuffer();
+      const cabRF = COLS.map(c => c[0]);
+      const linhasRF = [];
+      ws.eachRow((r, i) => { if (i > 1) linhasRF.push(cabRF.map((_, c) => { const v = r.getCell(c + 1).value; return v instanceof Date ? v.toISOString().slice(0,10) : (v == null ? '' : v); })); });
+      const blob = await pendAddPivots(buf, { sourceSheet:'RESULTADO FINAL', headers:cabRF, rows:linhasRF, pivots:[
+        { sheetIndex:1, name:'Tabela dinâmica1', row:'GESTOR', col:'PLANIUM', pages:['IMPLANTA AMANHÃ','BITIX'], data:'BENEFICIARIOS', dataName:'Soma de BENEFICIARIOS' },
+        { sheetIndex:2, name:'Tabela dinâmica3', row:'GESTOR', col:'DITEC', pages:['DATA VIGÊNCIA','CADASTRO','BITIX'], data:'BENEFICIARIOS', dataName:'Vidas', rowCaption:'EXECUTIVO' },
+      ]});
       const hoje = new Date().toLocaleDateString('pt-BR').replace(/\//g,'.');
       const quem = pendCurrentGestor ? String(pendCurrentGestor).replace(/[\\/:*?"<>|]+/g,' ').trim() : 'Todas as equipes';
       const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+      a.href = URL.createObjectURL(blob);
       a.download = `Funil PME - ${quem} - ${hoje}.xlsx`;
       document.body.appendChild(a); a.click();
       setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
