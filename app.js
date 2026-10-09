@@ -1130,7 +1130,7 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     document.getElementById('pendStatusResumo').textContent = nSel ? (nSel === 1 ? '1 status marcado' : nSel + ' status marcados') : 'Todos os status';
     document.getElementById('pendStatusBtn').classList.toggle('on', nSel > 0);
     document.getElementById('pendStatusHint').textContent = pendActiveTab === 'pme'
-      ? 'A proposta passa pelas áreas nessa ordem. Marque o que quer ver; os números mostram quantas propostas estão em cada situação.'
+      ? 'A proposta passa pelas áreas nessa ordem. Na mesma área, vale qualquer status marcado; marcando em áreas diferentes, a proposta precisa bater em todas. Os números mostram quantas propostas estão em cada situação.'
       : 'Marque o que quer ver; os números mostram quantos orçamentos estão em cada situação.';
     document.getElementById('pendStatusClear').style.display = nSel ? '' : 'none';
 
@@ -1141,12 +1141,21 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
 
     // Extras só entram quando o status do Planium delas está marcado; as em aberto seguem a regra de sempre.
     // (busca por nº sem status marcado também acha as extras — ex.: "essa proposta já foi implantada?")
+    // Regra do filtro (corrigida em 09/10/2026, Victor achou: marcou Planium LIBERADO + Cadastro CONCLUIDO + Ditec LIBERADA
+    // e vinham DEVOLVIDAS — o filtro era "OU" geral, bastava bater numa área). Agora: dentro da MESMA área vale qualquer
+    // status marcado (OU); entre áreas DIFERENTES a proposta tem que bater em todas (E).
+    const selPorArea = {};
+    pendSelectedStatuses.forEach(k => { const sep = k.indexOf('::'), f = sep >= 0 ? k.slice(0, sep) : ''; (selPorArea[f] = selPorArea[f] || new Set()).add(k); });
+    const bateFiltro = p => {
+      const keys = statusesOf(p).map(statusKey);
+      return Object.values(selPorArea).every(set => keys.some(k => set.has(k)));
+    };
     const pmeStatusOk = p => p._extra
-      ? (pendActiveTab === 'pme' && (pendSelectedStatuses.has('planium::' + pendPlaniumView(p)) || (!!searchRaw && pendSelectedStatuses.size === 0)))
-      : (pendActiveTab !== 'pme' || pendSelectedStatuses.size === 0 || statusesOf(p).some(o=>pendSelectedStatuses.has(statusKey(o))));
+      ? (pendActiveTab === 'pme' && ((!!selPorArea.planium && bateFiltro(p)) || (!!searchRaw && pendSelectedStatuses.size === 0)))
+      : (pendActiveTab !== 'pme' || pendSelectedStatuses.size === 0 || bateFiltro(p));
     const pmeFiltered = pmeComExtras.filter(p => (!activeMonth || pendMonthOf(p.dataVigencia) === activeMonth) && (!activeCorretora || p.corretora === activeCorretora) && pmeStatusOk(p) && (!searchRaw || String(p.proposta||'').toLowerCase().indexOf(searchRaw) >= 0))
       .sort((a,b) => pendSortDir * ((a.beneficiarios||0) - (b.beneficiarios||0)));
-    const pfFiltered = pf.filter(p => (!activeMonth || pendMonthOf(p.dataStatus) === activeMonth) && (!activeCorretora || p.corretora === activeCorretora) && (pendActiveTab !== 'pf' || pendSelectedStatuses.size === 0 || statusesOf(p).some(o=>pendSelectedStatuses.has(statusKey(o)))) && (!searchRaw || String(p.orcamento||'').toLowerCase().indexOf(searchRaw) >= 0))
+    const pfFiltered = pf.filter(p => (!activeMonth || pendMonthOf(p.dataStatus) === activeMonth) && (!activeCorretora || p.corretora === activeCorretora) && (pendActiveTab !== 'pf' || pendSelectedStatuses.size === 0 || bateFiltro(p)) && (!searchRaw || String(p.orcamento||'').toLowerCase().indexOf(searchRaw) >= 0))
       .sort((a,b) => pendSortDir * ((a.vidas||0) - (b.vidas||0)));
     pendLastPmeFiltered = pmeFiltered;
     pendLastPfFiltered = pfFiltered;
