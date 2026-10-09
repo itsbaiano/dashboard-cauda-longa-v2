@@ -622,6 +622,14 @@
   /* selo na linha da tabela */
   .pend-amanha{display:inline-flex; align-items:center; gap:4px; margin-left:6px; padding:1px 8px; border-radius:999px; background:rgba(22,184,122,.14); color:var(--green); font-size:10.5px; font-weight:800; white-space:nowrap; vertical-align:1px;}
   .pend-amanha::before{content:""; width:6px; height:6px; border-radius:50%; background:currentColor;}
+  /* botão "Baixar .xlsx" do funil PME */
+  .pend-xlsx-btn{display:inline-flex; align-items:center; gap:7px; padding:8px 14px; border-radius:8px; border:1.5px solid var(--green); background:rgba(22,184,122,.08); color:var(--text); font:inherit; font-size:12.5px; font-weight:700; cursor:pointer; transition:background-color .15s, transform .15s, box-shadow .15s;}
+  .pend-xlsx-btn:hover:not(:disabled){background:rgba(22,184,122,.16); transform:translateY(-1px); box-shadow:0 6px 14px rgba(22,184,122,.18);}
+  .pend-xlsx-btn:disabled{opacity:.5; cursor:default;}
+  .pend-xlsx-btn:focus-visible{outline:2px solid var(--green); outline-offset:2px;}
+  .pend-xlsx-ic{width:14px; height:16px; border-radius:2px; background:var(--green); position:relative; flex:0 0 auto;}
+  .pend-xlsx-ic::after{content:""; position:absolute; left:3px; right:3px; top:4px; height:8px; background:linear-gradient(#fff 0 0) 0 0/100% 1.5px no-repeat, linear-gradient(#fff 0 0) 0 3px/100% 1.5px no-repeat, linear-gradient(#fff 0 0) 0 6px/100% 1.5px no-repeat;}
+  @media (prefers-reduced-motion:reduce){ .pend-xlsx-btn{transition:none;} }
   /* tabela das Pendências: corretora com espaço, demais células quebram linha (igual V1) */
   #pendModal td.name{min-width:200px;}
   #pendModal td{white-space:normal;}
@@ -1888,7 +1896,12 @@ window.__IS_LOCAL_TEST__ = window.location.hostname === '' || /^(localhost|127\.
       </div>
       <div style="margin-top:10px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
         <div id="pendBeneficiariosTotal" style="font-size:13px; color:var(--navy); font-weight:700;"></div>
-        <button id="pendPdfBtn" class="btn-reset" style="background:var(--navy); color:#fff; border-color:var(--navy); padding:8px 14px; border-radius:8px; font-size:12.5px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:6px;"><i class=ic-doc></i> Baixar relatório</button>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <!-- Planilha do funil PME (pedido do Victor, 2026-10-09): o que está na tela, no layout da aba RESULTADO FINAL
+               do "RELATORIO PME AUTOMATIZADO" + aba DINÂMICA por gestor (fórmulas). Liberado pra todos os perfis. -->
+          <button id="pendXlsxBtn" type="button" class="pend-xlsx-btn"><span class="pend-xlsx-ic" aria-hidden="true"></span> Baixar .xlsx</button>
+          <button id="pendPdfBtn" class="btn-reset" style="background:var(--navy); color:#fff; border-color:var(--navy); padding:8px 14px; border-radius:8px; font-size:12.5px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:6px;"><i class=ic-doc></i> Baixar relatório</button>
+        </div>
       </div>
       <div id="pendPmeSection">
         <div class="table-wrap pend-scroll" style="margin-top:12px;">

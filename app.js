@@ -1165,6 +1165,11 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     document.getElementById('pendPdfBtn').style.opacity = document.getElementById('pendPdfBtn').disabled ? '.5' : '';
     document.getElementById('pendPdfBtn').style.cursor = document.getElementById('pendPdfBtn').disabled ? 'default' : 'pointer';
     document.getElementById('pendPdfBtn').title = gestorNome ? '' : 'Selecione um gestor específico pra baixar o relatório';
+    // Planilha .xlsx: só PME, com qualquer gestor (inclusive "todos")
+    const xlsxBtn = document.getElementById('pendXlsxBtn');
+    xlsxBtn.style.display = pendActiveTab === 'pme' ? '' : 'none';
+    xlsxBtn.disabled = !pmeFiltered.length;
+    xlsxBtn.title = `Baixa as ${pmeFiltered.length} propostas da tela (com os filtros aplicados) + aba DINÂMICA por gestor`;
 
     document.getElementById('pendCountPme').textContent = pmeFiltered.reduce((s,p)=>s+(p.beneficiarios||0),0);
     document.getElementById('pendCountPf').textContent = pfFiltered.reduce((s,p)=>s+(p.vidas||0),0);
@@ -1342,6 +1347,146 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
     }
   }
   document.getElementById('pendPdfBtn').addEventListener('click', pendGerarPDF);
+
+  // ===== "Baixar .xlsx" do funil PME (pedido do Victor, 2026-10-09) =====
+  // Decisões: (1) exporta EXATAMENTE o que está na tela (gestor/mês/corretora/status/busca — pendLastPmeFiltered);
+  // (2) liberado pra todos os perfis (ele já manda a planilha manual no grupo geral); (3) duas abas:
+  //  - RESULTADO FINAL: mesmas colunas da aba de mesmo nome do "RELATORIO PME AUTOMATIZADO" (menos OPERADORA, que o
+  //    painel não guarda) + IMPLANTA AMANHÃ + EMPRESA;
+  //  - DINÂMICA: gestor × status do Bitix (vidas), com SOMASES/CONT.SES apontando pra aba RESULTADO FINAL — se ele
+  //    apagar/editar linhas na planilha, a dinâmica acompanha.
+  let pendExcelJsPromise = null;
+  function pendLoadExcelJS(){
+    if (window.ExcelJS) return Promise.resolve(window.ExcelJS);
+    if (!pendExcelJsPromise){
+      pendExcelJsPromise = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';
+        s.onload = () => window.ExcelJS ? resolve(window.ExcelJS) : reject(new Error('ExcelJS não carregou'));
+        s.onerror = () => { pendExcelJsPromise = null; reject(new Error('Falha ao baixar a biblioteca de planilhas')); };
+        document.head.appendChild(s);
+      });
+    }
+    return pendExcelJsPromise;
+  }
+  async function pendBaixarXlsx(){
+    const rows = pendLastPmeFiltered.slice();
+    if (!rows.length) return;
+    const btn = document.getElementById('pendXlsxBtn');
+    const txtOrig = btn.innerHTML;
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Gerando...';
+    try {
+      const ExcelJS = await pendLoadExcelJS();
+      // Vendedor, empresa e nome cru do gestor vêm da lista completa do Planium (mesma proposta)
+      const porNum = {};
+      (window.getPropostasData ? window.getPropostasData() : []).forEach(p => { porNum[String(p.p)] = p; });
+      const dataXl = iso => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso||'')); return m ? new Date(Date.UTC(+m[1], +m[2]-1, +m[3])) : null; };
+      const gestorDe = p => { const x = porNum[String(p.proposta)]; return (x && x.g) ? String(x.g).toUpperCase() : String(p._gestor || pendCurrentGestor || '').toUpperCase(); };
+      rows.sort((a,b) => gestorDe(a).localeCompare(gestorDe(b)) || (b.beneficiarios||0) - (a.beneficiarios||0));
+
+      const wb = new ExcelJS.Workbook();
+      wb.creator = 'Painel Comercial — Cauda Longa NDI SP';
+      const NAVY = 'FF101E63', VERDE = 'FF16B87A', CINZA = 'FFE3E9F8';
+      const borda = { top:{style:'thin',color:{argb:CINZA}}, bottom:{style:'thin',color:{argb:CINZA}}, left:{style:'thin',color:{argb:CINZA}}, right:{style:'thin',color:{argb:CINZA}} };
+      const estiloCab = cell => { cell.font = { bold:true, color:{argb:'FFFFFFFF'}, size:10 }; cell.fill = { type:'pattern', pattern:'solid', fgColor:{argb:NAVY} }; cell.alignment = { vertical:'middle', horizontal:'center', wrapText:true }; cell.border = borda; };
+
+      // ---- aba RESULTADO FINAL ----
+      const ws = wb.addWorksheet('RESULTADO FINAL', { views:[{ state:'frozen', ySplit:1 }] });
+      const COLS = [
+        ['PROPOSTA',12], ['GESTOR',34], ['BENEFICIARIOS',14], ['DATA RECEBIMENTO',15], ['DATA VIGÊNCIA',14], ['CADASTRO',20],
+        ['DITEC',16], ['BITIX',24], ['PLANIUM',13], ['CORRETORA',42], ['VENDEDOR',34], ['EMPRESA',42], ['IMPLANTA AMANHÃ',14],
+      ];
+      ws.columns = COLS.map(([h,w]) => ({ header:h, width:w }));
+      ws.getRow(1).height = 30;
+      ws.getRow(1).eachCell(estiloCab);
+      rows.forEach(p => {
+        const x = porNum[String(p.proposta)] || {};
+        const num = /^\d+$/.test(String(p.proposta)) ? Number(p.proposta) : p.proposta;
+        const r = ws.addRow([
+          num, gestorDe(p), p.beneficiarios || 0, dataXl(p.dataReceb), dataXl(p.dataVigencia),
+          pendSemLogin(p.status.cadastro) || '', pendSemLogin(p.status.ditec) || '', pendTxt(p.status.bitix) || '',
+          pendTxt(p.status.planium) || '', p.corretora || '', x.vd || '', x.em || '', pendImplantaAmanha(p) ? 'SIM' : '',
+        ]);
+        r.getCell(4).numFmt = 'dd/mm/yyyy'; r.getCell(5).numFmt = 'dd/mm/yyyy';
+        [1,3,4,5,9,13].forEach(c => { r.getCell(c).alignment = { horizontal:'center' }; });
+        if (pendImplantaAmanha(p)) r.getCell(13).font = { bold:true, color:{ argb:VERDE } };
+        r.eachCell({ includeEmpty:true }, c => { c.border = borda; });
+      });
+      ws.autoFilter = { from:{ row:1, column:1 }, to:{ row:1, column:COLS.length } };
+      const nBase = rows.length + 1; // última linha de dados
+
+      // ---- aba DINÂMICA: gestor × status do Bitix (vidas) ----
+      const wd = wb.addWorksheet('DINÂMICA', { views:[{ state:'frozen', xSplit:1, ySplit:3 }] });
+      const gestores = [...new Set(rows.map(gestorDe))].sort();
+      const ordemBitix = ['EM DIGITACAO','EM ANALISE','REANALISE','9 NAO PROCESSADO COM CRITICA','DEVOLVIDA','LIBERADO','PROCESSADO','CANCELADO'];
+      const statusSet = [...new Set(rows.map(p => pendTxt(p.status.bitix) || '(sem status no Bitix)'))];
+      statusSet.sort((a,b) => { const ia = ordemBitix.indexOf(a), ib = ordemBitix.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b); });
+      const filtros = [
+        document.getElementById('pendGestorFilter').value || 'Todos os gestores',
+        document.getElementById('pendMonthFilter').value ? 'vigência ' + document.getElementById('pendMonthFilter').value : 'todos os meses',
+        document.getElementById('pendCorretoraFilter').value || 'todas as corretoras',
+        pendSelectedStatuses.size ? [...pendSelectedStatuses].map(pendStatusKeyToLabel).join(', ') : 'todos os status',
+      ];
+      wd.getCell(1,1).value = 'Funil PME — vidas por gestor e status do Bitix';
+      wd.getCell(1,1).font = { bold:true, size:13, color:{ argb:NAVY } };
+      wd.getCell(2,1).value = 'Filtro: ' + filtros.join(' · ') + ' · gerado em ' + new Date().toLocaleString('pt-BR');
+      wd.getCell(2,1).font = { italic:true, size:9, color:{ argb:'FF56608F' } };
+      const cab = ['GESTOR', 'PROPOSTAS', 'VIDAS', ...statusSet, 'IMPLANTA AMANHÃ'];
+      cab.forEach((h,i) => { const c = wd.getCell(3, i+1); c.value = h; estiloCab(c); });
+      wd.getRow(3).height = 42;
+      wd.getColumn(1).width = 36; wd.getColumn(2).width = 11; wd.getColumn(3).width = 10;
+      statusSet.forEach((_,i) => { wd.getColumn(4+i).width = 13; });
+      wd.getColumn(4 + statusSet.length).width = 13;
+      const rng = col => `'RESULTADO FINAL'!$${col}$2:$${col}$${nBase}`;
+      const colLetra = n => { let s=''; while (n > 0){ const m = (n-1) % 26; s = String.fromCharCode(65+m) + s; n = Math.floor((n-1)/26); } return s; };
+      const vidasDe = (g, fn) => rows.filter(p => gestorDe(p) === g && fn(p)).reduce((s,p)=>s+(p.beneficiarios||0),0);
+      gestores.forEach((g, i) => {
+        const r = 4 + i;
+        wd.getCell(r,1).value = g;
+        wd.getCell(r,2).value = { formula:`COUNTIFS(${rng('B')},$A${r})`, result: rows.filter(p => gestorDe(p) === g).length };
+        wd.getCell(r,3).value = { formula:`SUMIFS(${rng('C')},${rng('B')},$A${r})`, result: vidasDe(g, () => true) };
+        statusSet.forEach((st, j) => {
+          const crit = st === '(sem status no Bitix)' ? '""' : `${colLetra(4+j)}$3`;
+          wd.getCell(r, 4+j).value = { formula:`SUMIFS(${rng('C')},${rng('B')},$A${r},${rng('H')},${crit})`, result: vidasDe(g, p => (pendTxt(p.status.bitix) || '(sem status no Bitix)') === st) };
+        });
+        wd.getCell(r, 4+statusSet.length).value = { formula:`SUMIFS(${rng('C')},${rng('B')},$A${r},${rng('M')},"SIM")`, result: vidasDe(g, pendImplantaAmanha) };
+      });
+      const rTot = 4 + gestores.length;
+      wd.getCell(rTot,1).value = 'TOTAL';
+      for (let c = 2; c <= cab.length; c++){
+        const L = colLetra(c);
+        const res = gestores.reduce((s,_,i) => s + (wd.getCell(4+i, c).value.result || 0), 0);
+        wd.getCell(rTot, c).value = { formula:`SUM(${L}4:${L}${rTot-1})`, result: res };
+      }
+      for (let r = 4; r <= rTot; r++){
+        for (let c = 1; c <= cab.length; c++){
+          const cell = wd.getCell(r,c);
+          cell.border = borda;
+          if (c > 1){ cell.alignment = { horizontal:'center' }; cell.numFmt = '#,##0;-#,##0;""'; }
+          if (r === rTot){ cell.font = { bold:true, color:{ argb:'FFFFFFFF' } }; cell.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:NAVY } }; }
+          else if (c === cab.length){ cell.font = { bold:true, color:{ argb:VERDE } }; }
+          else if (r % 2 === 1){ cell.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFF5F7FE' } }; }
+        }
+      }
+      // a dinâmica abre primeiro
+      wb.views = [{ activeTab: 1 }];
+      wb.worksheets.forEach(s => { s.properties.tabColor = { argb: s.name === 'DINÂMICA' ? VERDE : NAVY }; });
+
+      const buf = await wb.xlsx.writeBuffer();
+      const hoje = new Date().toLocaleDateString('pt-BR').replace(/\//g,'.');
+      const quem = pendCurrentGestor ? String(pendCurrentGestor).replace(/[\\/:*?"<>|]+/g,' ').trim() : 'Todas as equipes';
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+      a.download = `Funil PME - ${quem} - ${hoje}.xlsx`;
+      document.body.appendChild(a); a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+    } catch(err){
+      alert('Não consegui gerar a planilha: ' + err.message);
+    } finally {
+      btn.innerHTML = txtOrig; btn.disabled = !pendLastPmeFiltered.length;
+    }
+  }
+  document.getElementById('pendXlsxBtn').addEventListener('click', pendBaixarXlsx);
 
   document.querySelectorAll('#pendModal thead th[data-k]').forEach(th => {
     th.addEventListener('click', () => {
