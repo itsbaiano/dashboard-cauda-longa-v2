@@ -463,7 +463,7 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
       document.getElementById('mjGestorGridSub').textContent = 'Clique num card pra abrir o detalhe completo do time — ou use o botão pra ver todos os gestores aqui mesmo';
       document.getElementById('mjGestorGrid').innerHTML = teamRows.map((r,i) => {
         const p = r.meta ? r.int/r.meta : 0;
-        const cor = ['#2E52D4','#F26B21','#101E63','#16B87A','#FFB81C'][i % 5];
+        const cor = ['#2E52D4','#F26B21','#5B7CFA','#16B87A','#FFB81C'][i % 5];
         return `<div class="gestor-card" style="cursor:pointer" onclick="window.jumpToMetaJunho('${r.name.replace(/'/g,"\\'")}')" title="Ver detalhe deste time">
           <div class="avatar" style="background:${cor}">${iniciais(r.name)}</div><div class="name">${r.name}</div><div class="role">${MJ_TEAMS[r.name].members.length} gestores</div>
           <div class="total-pct" style="color:${pctColor(p)}">${pctf(p)}</div>
@@ -483,7 +483,7 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
       };
 
       document.getElementById('mjTeamsExpand').innerHTML = teamRows.map((r,i) => {
-        const cor = ['#2E52D4','#F26B21','#101E63','#16B87A','#FFB81C'][i % 5];
+        const cor = ['#2E52D4','#F26B21','#5B7CFA','#16B87A','#FFB81C'][i % 5];
         const p = r.meta ? r.int/r.meta : 0;
         const isOpen = mjExpandedTeams.has(r.name);
         // Menor % primeiro dentro do time — quem precisa de atenção aparece no topo da lista.
@@ -509,6 +509,8 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
           ${isOpen ? `<div class="mj-team-expand-body">${rowsHtml}</div>` : ''}
         </div>`;
       }).join('');
+      // Visão por trimestre: este caminho (todas as equipes) retorna antes do gancho do fim da função.
+      if (window.__mjAfterRender) window.__mjAfterRender();
       return;
     }
     document.getElementById('mjExpandAllBtn').style.display = 'none';
@@ -700,6 +702,8 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
   // as telas de mês único, errado pra somar trimestre (somaria o mês atual no lugar do ausente).
   window.getMetaJunhoTeamsStrict = function(month){ return MJ_SYNTH.has(month) ? null : (MJ_TEAMS_BY_MONTH[month] || null); };
   window.getMjCurrentTeam = function(){ return currentTeam; };
+  // Re-renderiza a tela do Desempenho Comercial (usado pelo módulo de trimestre ao voltar pra visão mensal).
+  window.mjRerender = function(){ renderMetaJunho(); };
   window.updateMetaJunhoData = function(newData){
     // Grava sempre no mês que a planilha realmente representa (detectedMonth),
     // não sempre em "currentMonth" — senão um arquivo de mês passado sobrescreveria
@@ -813,7 +817,7 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
         proposta: p.p, corretora: p.co,
         // DITEC/CADASTRO o Planium já traz (ver parsePlaniumWorkbook) — só BITIX fica em
         // branco mesmo, porque essa coluna só existe na Planilha1, não no Planium.
-        status: { planium: p.st, cadastro: p.ca || '', ditec: p.di || '', bitix: '' },
+        status: { planium: p.st, cadastro: p.ca || '', ditec: p.di || '', bitix: p.bi || '' },
         dataReceb: p.dr || '', dataVigencia: p.vg, beneficiarios: p.bn,
       });
       adicionadas++;
@@ -909,6 +913,23 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     const gestorNome = pendCurrentGestor;
     const pme = pendenciasDoGestor(PENDENCIAS_PME, gestorNome, 'proposta');
     const pf = pendenciasDoGestor(PENDENCIAS_PF, gestorNome, 'orcamento');
+    // Filtro "mais livre" (pedido do Victor, 2026-10-07): propostas que NÃO estão em análise/pendência
+    // (devolvida, implantada, cancelada...) vêm da lista completa do Planium (PROPOSTAS) e aparecem como
+    // opção no status do Planium — só entram na tabela quando esse status é marcado. Sem filtro, o modal e
+    // todos os totais do funil continuam mostrando só o que está em aberto (PENDENCIAS_PME), como sempre.
+    const pmeExtras = (() => {
+      const props = window.getPropostasData ? window.getPropostasData() : [];
+      const toFriendly = g => window.getGestorFriendlyName ? window.getGestorFriendlyName(g) : g;
+      const alvo = gestorNome ? toFriendly(gestorNome) : null;
+      const jaTem = new Set(pme.map(p => String(p.proposta)));
+      return props
+        // só gestores conhecidos (nome cru com tradução pra um executivo — igual às pendências)
+        .filter(p => p.st && !/pend|analis/i.test(p.st) && p.g && toFriendly(p.g) !== p.g && !jaTem.has(String(p.p)))
+        .map(p => ({ proposta: p.p, corretora: p.co, status: { planium: p.st, cadastro: p.ca || '', ditec: p.di || '', bitix: p.bi || '' },
+                     dataReceb: p.dr || '', dataVigencia: p.vg, beneficiarios: p.bn, _extra: true, _gestor: toFriendly(p.g) }))
+        .filter(p => !alvo || p._gestor === alvo);
+    })();
+    const pmeComExtras = pme.concat(pmeExtras);
     document.getElementById('pendFilterLabel').textContent = pendActiveTab === 'pme' ? 'Filtrar por Data Vigência' : 'Filtrar por Data Status';
     document.getElementById('pendPropostaLabel').textContent = pendActiveTab === 'pme' ? 'Buscar por Nº da Proposta' : 'Buscar por Nº do Orçamento';
     document.getElementById('pendPropostaSearch').placeholder = pendActiveTab === 'pme' ? 'Ex.: 12345' : 'Ex.: 67890';
@@ -962,12 +983,16 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     // status (ex. "INICIADO ANÁLISE:EC625813") — glitch de digitação na origem (Ditec/SIGO), não
     // categoria real do funil. Com um gestor específico selecionado a lista já é curta, então
     // não filtra nada ali — só no agregado de ~19 gestores é que esse ruído aparece.
+    // As propostas extras (devolvida/implantada/cancelada) só contam pro status do PLANIUM — os status de
+    // Cadastro/Ditec/Bitix delas não entram nas opções (senão as implantadas inflavam essas contagens).
+    const chipList = pendActiveTab === 'pme' ? pmeComExtras : pf;
+    const statusesForChips = p => p._extra ? statusesOf(p).filter(o => o.field === 'planium') : statusesOf(p);
     const statusCounts = {};
-    list.flatMap(statusesOf).forEach(o => { const k = statusKey(o); statusCounts[k] = (statusCounts[k]||0) + 1; });
+    chipList.flatMap(statusesForChips).forEach(o => { const k = statusKey(o); statusCounts[k] = (statusCounts[k]||0) + 1; });
 
     const seenKeys = new Set();
     const statuses = [];
-    list.flatMap(statusesOf).forEach(o => { const k = statusKey(o); if (!seenKeys.has(k)){ seenKeys.add(k); statuses.push(o); } });
+    chipList.flatMap(statusesForChips).forEach(o => { const k = statusKey(o); if (!seenKeys.has(k)){ seenKeys.add(k); statuses.push(o); } });
     pendSelectedStatuses.forEach(k => { if (!seenKeys.has(k)) pendSelectedStatuses.delete(k); });
 
     const FIELD_ORDER = ['planium','cadastro','ditec','bitix'];
@@ -976,6 +1001,11 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
       .sort((a,b) => {
         const fa = FIELD_ORDER.indexOf(a.field), fb = FIELD_ORDER.indexOf(b.field);
         if (fa !== fb) return fa - fb;
+        // No Planium, os status em aberto (análise/pendência) vêm antes dos finalizados (implantada etc.)
+        if (a.field === 'planium'){
+          const ra = /pend|analis/i.test(a.value) ? 0 : 1, rb = /pend|analis/i.test(b.value) ? 0 : 1;
+          if (ra !== rb) return ra - rb;
+        }
         return statusCounts[statusKey(b)] - statusCounts[statusKey(a)];
       });
     const chipsWrap = document.getElementById('pendStatusChips');
@@ -1000,7 +1030,12 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     // pros dois: cada aba já sabe qual número procurar (dataVigencia/dataStatus segue o mesmo padrão).
     const searchRaw = document.getElementById('pendPropostaSearch').value.trim().toLowerCase();
 
-    const pmeFiltered = pme.filter(p => (!activeMonth || pendMonthOf(p.dataVigencia) === activeMonth) && (!activeCorretora || p.corretora === activeCorretora) && (pendActiveTab !== 'pme' || pendSelectedStatuses.size === 0 || statusesOf(p).some(o=>pendSelectedStatuses.has(statusKey(o)))) && (!searchRaw || String(p.proposta||'').toLowerCase().indexOf(searchRaw) >= 0))
+    // Extras só entram quando o status do Planium delas está marcado; as em aberto seguem a regra de sempre.
+    // (busca por nº sem status marcado também acha as extras — ex.: "essa proposta já foi implantada?")
+    const pmeStatusOk = p => p._extra
+      ? (pendActiveTab === 'pme' && (pendSelectedStatuses.has('planium::' + p.status.planium) || (!!searchRaw && pendSelectedStatuses.size === 0)))
+      : (pendActiveTab !== 'pme' || pendSelectedStatuses.size === 0 || statusesOf(p).some(o=>pendSelectedStatuses.has(statusKey(o))));
+    const pmeFiltered = pmeComExtras.filter(p => (!activeMonth || pendMonthOf(p.dataVigencia) === activeMonth) && (!activeCorretora || p.corretora === activeCorretora) && pmeStatusOk(p) && (!searchRaw || String(p.proposta||'').toLowerCase().indexOf(searchRaw) >= 0))
       .sort((a,b) => pendSortDir * ((a.beneficiarios||0) - (b.beneficiarios||0)));
     const pfFiltered = pf.filter(p => (!activeMonth || pendMonthOf(p.dataStatus) === activeMonth) && (!activeCorretora || p.corretora === activeCorretora) && (pendActiveTab !== 'pf' || pendSelectedStatuses.size === 0 || statusesOf(p).some(o=>pendSelectedStatuses.has(statusKey(o)))) && (!searchRaw || String(p.orcamento||'').toLowerCase().indexOf(searchRaw) >= 0))
       .sort((a,b) => pendSortDir * ((a.vidas||0) - (b.vidas||0)));
@@ -1814,6 +1849,8 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
   const GESTOR_EQUIPE = {"VENDA INTERNA": "VENDA INTERNA", "PATRICIA PESSOA MONKS": "CAUDA LONGA", "KAROLLAINNY RANGEL DE SOUSA LOPES": "DIGITAL", "PABLO SERGIO RIBEIRO AMORA": "CAUDA LONGA", "GUILHERME DE LIMA MUSACHI": "PLATAFORMA ABC/ALTO TIETÊ/BX", "CAMILA ALVES PERTINHEZ": "PLATAFORMA SP", "JONATHAN LEAL DOS SANTOS SILVA": "CAUDA LONGA", "MAXUEL PIMENTEL NOBREGA": "DIGITAL", "AGATHA EIKO RODRIGUES SAKAMOTO": "CAUDA LONGA", "DANIELA NOVAIS DOS SANTOS": "DIGITAL", "ERIKA DE SOUSA SILVA": "PLATAFORMA SP", "LAIS DOS SANTOS MARTINS": "PLATAFORMA SP", "WILDER COCA PATZI": "PLATAFORMA SP", "AMANDA DOS SANTOS SOBRAL": "DIGITAL", "IZABELE DE OLIVEIRA DA SILVA": "PLATAFORMA ABC/ALTO TIETÊ/BX", "KAIQUE ARAUJO DA SILVA": "INTERIOR SP", "VIVIAN DE CASSIA AMBROSIO": "PLATAFORMA ABC/ALTO TIETÊ/BX", "DANIELA FREDERICO MARTINS CAMPINAS": "INTERIOR SP", "FLAVIA AUANA SILVA DE OLIVEIRA": "INTERIOR SP", "DANIELA FREDERICO MARTINS AM": "INTERIOR SP"};
   // Exposto em window pois o parser do "Crescimento Geral" (mais abaixo no arquivo) vive
   // numa IIFE diferente desta — sem isso, GESTOR_EQUIPE não existe nesse escopo (2026-09-04).
+  // Executiva nova na Plataforma (Out/26, planilha NDI SP) — ainda não está na Carteira.
+  if (!GESTOR_EQUIPE['AGATHA AMARAL RIBEIRO']) GESTOR_EQUIPE['AGATHA AMARAL RIBEIRO'] = 'PLATAFORMA SP';
   window.GESTOR_EQUIPE = GESTOR_EQUIPE;
 
   const fmt0 = n => Math.round(n).toLocaleString('pt-BR');
@@ -4600,7 +4637,7 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
   function renderOverview(){
     const mjData = window.getMetaJunhoData ? window.getMetaJunhoData() : null;
     const eligAll = window.getEligibilidadeData ? window.getEligibilidadeData() : [];
-    if (!mjData || !mjData.teams || !mjData.teams[CL_LABEL]) return;
+    if (!mjData || !mjData.teams || !Object.keys(mjData.teams).some(k => /\(Cauda Longa\)\s*$/.test(k))) return;
 
     const teamSel = document.getElementById('ovTeam');
     const wasTeamChange = teamSel.dataset.lastTeam !== undefined && teamSel.dataset.lastTeam !== teamSel.value;
@@ -5287,7 +5324,8 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     'CAMILA FOIADELLI': 'Camila Foiadelli (Plataforma)',
     'LEONARDO MARIANO': 'Leonardo Mariano (ABC)',
     'ESTEVÃO CARDOSO': 'Estevão Cardoso (Cauda Longa)',
-    'MARCELO LIMA': 'Marcelo Lima (Digital)',
+    'MARCELO LIMA': 'Marcelo Lima (Digital)',   // só vale se a planilha vier sem a coluna FILIAL (ver FILIAL_TIPO)
+    'MARIA APARECIDA': 'Maria Aparecida (Digital)',
     'MARIA CABRAL': 'Maria Cabral (Interior)'
   };
   const PALETTE = ['#2E52D4','#F26B21','#101E63','#16B87A','#FFB81C','#1D33A8'];
@@ -5350,8 +5388,14 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     const rawToFriendly = {};
     const naoAtribuido = { ind:0, ss:0, pme:0, adm:0 };
     let buffer = [];
+    // Tipo do time pela coluna FILIAL (PLATAFORMA/ABC/CAUDA LONGA/DIGITAL/INTERIOR), preenchida na 1ª linha
+    // de cada bloco — o rótulo do time é "<Sênior> (<Tipo>)" e NÃO depende mais de quem é o sênior:
+    // em 06/10/2026 o sênior da Cauda Longa virou Marcelo Lima e o do Digital virou Maria Aparecida.
+    const FILIAL_TIPO = {'PLATAFORMA':'Plataforma','ABC':'ABC','CAUDA LONGA':'Cauda Longa','DIGITAL':'Digital','INTERIOR':'Interior'};
+    let blockFilial = '';
     for (let i = 3; i < metaRows.length; i++){
       const row = metaRows[i] || [];
+      if (typeof row[0] === 'string' && FILIAL_TIPO[row[0].trim().toUpperCase()]) blockFilial = row[0].trim().toUpperCase();
       const gestorName = row[1];
       if (!gestorName || typeof gestorName !== 'string') continue;
       const gestorNameUpper = gestorName.trim().toUpperCase();
@@ -5362,7 +5406,9 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
       if (gestorNameUpper === 'TOTAL') continue;
       if (gestorName.trim().indexOf('TOTAL ') === 0){
         const seniorRaw = gestorName.trim().replace('TOTAL ','').trim();
-        const teamLabel = SENIOR_TEAM_LABELS[seniorRaw] || titlecasePt(seniorRaw);
+        const tipoTime = FILIAL_TIPO[blockFilial];
+        const teamLabel = tipoTime ? (titlecasePt(seniorRaw) + ' (' + tipoTime + ')') : (SENIOR_TEAM_LABELS[seniorRaw] || titlecasePt(seniorRaw));
+        blockFilial = '';
         benchmark.push({time: teamLabel, meta:num(row[14]), int:num(row[15]), pct:num(row[16])});
         teams[teamLabel] = {
           members: buffer.slice(),
@@ -5383,8 +5429,10 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
         total: { meta:num(row[14]), int:num(row[15]) }
       });
     }
-    const cauda = teams['Estevão Cardoso (Cauda Longa)'];
-    if (!cauda) throw new Error('Não encontrei o time "Estevão Cardoso (Cauda Longa)" na planilha.');
+    // Time Cauda Longa achado pelo TIPO, qualquer que seja o sênior (Estevão até 09/2026, Marcelo Lima depois).
+    const caudaKey = Object.keys(teams).find(k => /\(Cauda Longa\)\s*$/.test(k));
+    const cauda = caudaKey ? teams[caudaKey] : null;
+    if (!cauda) throw new Error('Não encontrei o time "Cauda Longa" na planilha (esperado um bloco FILIAL = CAUDA LONGA seguido de "TOTAL <sênior>").');
     const clFound = cauda.members.map(m=>m.nome);
     const missing = Object.values(CL_GESTORES_RAW).filter(n => !clFound.includes(n));
     if (missing.length) throw new Error('Não encontrei na planilha os gestores: ' + missing.join(', '));
@@ -5591,7 +5639,10 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     }
     html += '<table style="width:100%;font-size:12.5px;margin-bottom:10px;border-collapse:collapse;"><thead><tr style="border-bottom:1px solid var(--line);"><th style="text-align:left;padding:4px;">Time</th><th style="text-align:right;padding:4px;">Meta (atual→novo)</th><th style="text-align:right;padding:4px;">Integrado (atual→novo)</th></tr></thead><tbody>';
     Object.keys(newData.teams).forEach(t => {
-      const oldT = (old.teams[t] && old.teams[t].total) || {meta:0,int:0};
+      // Casa o time antigo pelo rótulo e, se o sênior mudou (ex.: Cauda Longa: Estevão -> Marcelo Lima), pelo TIPO do time.
+      const tipoDe = l => ((/\(([^)]*)\)\s*$/.exec(l) || [])[1]) || '';
+      const oldKey = old.teams[t] ? t : Object.keys(old.teams).find(k => tipoDe(k) && tipoDe(k) === tipoDe(t));
+      const oldT = (oldKey && old.teams[oldKey].total) || {meta:0,int:0};
       const newT = newData.teams[t].total;
       const bold = t.indexOf('Cauda Longa') >= 0 ? 'font-weight:700;' : '';
       html += `<tr style="${bold}"><td style="padding:4px;">${t}</td><td style="text-align:right;padding:4px;">${fmtN(oldT.meta)} → ${fmtN(newT.meta)}</td><td style="text-align:right;padding:4px;">${fmtN(oldT.int)} → ${fmtN(newT.int)}</td></tr>`;
@@ -6123,6 +6174,9 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
       const d = new Date(Math.round((v - 25569) * 86400 * 1000));
       return d.toISOString().slice(0,10);
     }
+    // "dd/mm/aaaa" (T6140B do SIGO em CSV, 2026-10-07) → "aaaa-mm-dd", o mesmo formato do resto do painel.
+    const br = /^(\d{2})\/(\d{2})\/(\d{4})/.exec(String(v).trim());
+    if (br) return `${br[3]}-${br[2]}-${br[1]}`;
     return String(v).slice(0,10);
   }
 
@@ -6247,7 +6301,8 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     const idx = name => header.indexOf(name);
     const iId = idx('propostaID'), iProp = idx('oper_propnum'), iCorrCnpj = idx('corretora_cnpj'),
           iContrNome = idx('contratante_nome'), iContrCnpj = idx('contratante_cnpj'), iVg = idx('date_vigencia'),
-          iSt = idx('status'), iBn = idx('beneficiarios'), iVd = idx('vendedor_nome'), iCo = idx('corretora_nome');
+          iSt = idx('status'), iBn = idx('beneficiarios'), iVd = idx('vendedor_nome'), iCo = idx('corretora_nome'),
+          iDn = idx('data_notificada');
     if ([iId,iProp,iCorrCnpj,iContrNome,iVg,iSt,iBn,iCo].some(i=>i<0)){
       throw new Error('O extrato da Planium não tem todas as colunas esperadas (propostaID, oper_propnum, corretora_cnpj, contratante_nome, date_vigencia, status, beneficiarios, corretora_nome).');
     }
@@ -6261,6 +6316,8 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
         cn: fmtCnpjDisplay(row[iContrCnpj]), em: String(row[iContrNome]||''),
         vg: excelDateToStr(row[iVg]), st: String(row[iSt]||'').trim(), bn: num(row[iBn]),
         vd: String(row[iVd]||''), co: String(co).trim(),
+        // data de notificação (aaaa-mm-dd) — regra de quanto tempo guardar as finalizadas (buildPmeFromRawFiles)
+        dn: iDn >= 0 ? excelDateToStr(row[iDn]) : '',
       });
     }
     if (!records.length) throw new Error('Nenhuma proposta reconhecida no extrato da Planium.');
@@ -6281,14 +6338,17 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     if (headerRowIdx < 0) return null; // não é um extrato do T6140B — deixa o chamador tentar outro tipo
     const header = rows[headerRowIdx].map(h => stripAccentsUpper(h));
     const idx = name => header.indexOf(name);
-    const iControle = idx('NU_CONTROLE'), iRecebimento = idx('DT_RECEBIMENTO'),
-          iAreaMedica = idx('STATUS_AREA_MEDICA'), iCadastro = idx('STATUS_CADASTRO'), iBitix = idx('STATUS_PROPOSTA_BITIX');
+    const iControle = idx('NU_CONTROLE'), iRecebimento = idx('DT_RECEBIMENTO'), iCadastro = idx('STATUS_CADASTRO'), iBitix = idx('STATUS_PROPOSTA_BITIX');
+    // "STATUS_AREA_MÉDICA" — aceita também o cabeçalho com o acento quebrado ("STATUS_AREA_M?DICA").
+    const iAreaMedica = header.findIndex(h => /^STATUS_AREA_M.{0,2}DICA$/.test(h));
     const byControle = {};
     for (let i = headerRowIdx+1; i < rows.length; i++){
       const row = rows[i] || [];
       const controle = row[iControle];
       if (!controle) continue;
-      byControle[String(controle)] = {
+      // Mesmo nº de controle repetido: vale a PRIMEIRA linha, igual ao PROCV do Excel (2026-10-07).
+      if (byControle[String(controle).trim()]) continue;
+      byControle[String(controle).trim()] = {
         dtReceb: iRecebimento>=0 ? excelDateToStr(row[iRecebimento]) : '',
         ditec: iAreaMedica>=0 ? String(row[iAreaMedica]||'').trim() : '',
         cadastro: iCadastro>=0 ? String(row[iCadastro]||'').trim() : '',
@@ -6316,11 +6376,19 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     const propostas = [];
     const pendData = {};
     const naoMapeados = {};
+    // O que guardar (decisão do Victor, 2026-10-07): o extrato pode ser de qualquer período (até o ano todo),
+    // mas o painel guarda as propostas EM ABERTO (análise, pendência, devolvida) de qualquer data e as
+    // FINALIZADAS (implantada, cancelada...) só com notificação nos últimos 3 meses — tudo isso é baixado
+    // por todo mundo no login, e o ano inteiro (~100 mil propostas) deixaria o painel pesado.
+    const corte = (() => { const d = new Date(); d.setMonth(d.getMonth() - 3); return d.toISOString().slice(0,10); })();
+    const emAberto = st => /pend|analis|devolv/i.test(String(st||''));
+    let finalizadasAntigas = 0;
     merged.forEach(rec => {
-      const t6 = (t6140bByControle && t6140bByControle[rec.p]) || null;
+      const t6 = (t6140bByControle && t6140bByControle[String(rec.p).trim()]) || null;
       const gestorRaw = byCnpj[rec.corrCnpj] || '';
       const dr = t6 ? t6.dtReceb : '', di = t6 ? t6.ditec : '', ca = t6 ? t6.cadastro : '', bi = t6 ? t6.bitix : '';
-      propostas.push({ p: rec.p, cn: rec.cn, em: rec.em, vg: rec.vg, st: rec.st, bn: rec.bn, vd: rec.vd, co: rec.co, g: gestorRaw, dr, di, ca });
+      if (!emAberto(rec.st) && rec.dn && rec.dn < corte){ finalizadasAntigas++; return; }
+      propostas.push({ p: rec.p, cn: rec.cn, em: rec.em, vg: rec.vg, st: rec.st, bn: rec.bn, vd: rec.vd, co: rec.co, g: gestorRaw, dr, di, ca, bi, dn: rec.dn });
       if (!/pend|analis/i.test(rec.st)) return;
       const friendly = FULL_19_GESTOR_RAW_MAP[stripAccentsUpper(gestorRaw)] || ABREV_GESTOR_MAP[stripAccentsUpper(gestorRaw)];
       if (!friendly){
@@ -6339,6 +6407,7 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
       pendData: { data: pendData, naoMapeados },
       totalArquivos: planiumRecordsList.length, totalBruto, totalMerged: merged.length,
       duplicatasRemovidas: totalBruto - merged.length,
+      finalizadasAntigas, corte,
     };
   }
 
@@ -6352,7 +6421,8 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     'KAROLLAINNY RANGEL DE SOUSA LOPES':'Karollainny Rangel de Sousa Lopes','AMANDA DOS SANTOS SOBRAL':'Amanda dos Santos Sobral',
     'DANIELA NOVAIS DOS SANTOS':'Daniela Novais dos Santos','MAXUEL PIMENTEL NOBREGA':'Maxuel Pimentel Nobrega',
     'DANIELA FREDERICO MARTINS CAMPINAS':'Daniela Frederico Martins (Campinas)','DANIELA FREDERICO MARTINS AM':'Daniela Frederico Martins (AM)',
-    'KAIQUE ARAUJO DA SILVA':'Kaique Araujo da Silva','FLAVIA AUANA SILVA DE OLIVEIRA':'Flavia Auana Silva de Oliveira'
+    'KAIQUE ARAUJO DA SILVA':'Kaique Araujo da Silva','FLAVIA AUANA SILVA DE OLIVEIRA':'Flavia Auana Silva de Oliveira',
+    'AGATHA AMARAL RIBEIRO':'Agatha Amaral Ribeiro'
   };
   // Exposto pra outras views converterem nome cru da planilha ("PABLO SERGIO RIBEIRO
   // AMORA", como o PLANIUM/Conversão usa) pro nome bonito ("Pablo Amora", como
@@ -6512,6 +6582,28 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
       reader.onload = e => {
         try { resolve(XLSX.read(new Uint8Array(e.target.result), {type:'array'})); }
         catch(err){ reject(err); }
+      };
+      reader.onerror = () => reject(new Error('Falha ao ler o arquivo.'));
+      reader.readAsArrayBuffer(file);
+    });
+  }
+  // Extratos crus do Funil PME em CSV (Planium "stats_export_gndi_*.csv" e T6140B "CONFERENCIA_ORCAMENTO*.csv"):
+  // lidos como TEXTO e com os valores crus (raw). Sem isso (2026-10-07): o T6140B vem com acentuação do
+  // Windows (o cabeçalho "STATUS_AREA_MÉDICA" quebrava e o DITEC saía todo em branco) e a leitura padrão
+  // virava "05/10/2026" em 10 de maio (data americana). .xlsx continua pelo caminho de sempre.
+  function readPmeFileAsWorkbook(file){
+    if (!/\.csv$/i.test(file.name || '')) return readFileAsWorkbook(file);
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = e => {
+        try {
+          const bytes = new Uint8Array(e.target.result);
+          let text;
+          try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+          catch(_){ text = new TextDecoder('windows-1252').decode(bytes); }
+          if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+          resolve(XLSX.read(text, { type:'string', raw:true }));
+        } catch(err){ reject(err); }
       };
       reader.onerror = () => reject(new Error('Falha ao ler o arquivo.'));
       reader.readAsArrayBuffer(file);
@@ -6698,7 +6790,7 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
         let t6140bByControle = null;
         const pendNaoReconhecidos = [];
         for (const file of pendPmeFiles){
-          const wb = await readFileAsWorkbook(file);
+          const wb = await readPmeFileAsWorkbook(file);
           if (!combinedWb && findSheet(wb, 'Planilha1') && findSheet(wb, 'PLANIUM')){
             combinedWb = wb;
             continue;
@@ -6730,7 +6822,8 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
             pendingPropostas = result.propostas;
             summaryHtml += diffPendPme(pendingPendPme);
             summaryHtml += diffPropostas(pendingPropostas);
-            summaryHtml += `<div style="font-size:12.5px; margin-top:6px; color:var(--blue);">Funil PME — ${result.totalArquivos} extrato(s) da Planium, ${result.totalBruto} propostas brutas, ${result.duplicatasRemovidas} duplicata(s) removida(s) (mesma propostaID em mais de um arquivo).${t6140bByControle ? '' : ' <b>T6140B não incluído</b> — DATA RECEBIMENTO/DITEC/CADASTRO/BITIX ficam em branco.'}</div>`;
+            const corteBR = result.corte.split('-').reverse().join('/');
+            summaryHtml += `<div style="font-size:12.5px; margin-top:6px; color:var(--blue);">Funil PME — ${result.totalArquivos} extrato(s) da Planium, ${result.totalBruto} linhas, ${result.duplicatasRemovidas} duplicada(s) removida(s) → <b>${result.totalMerged}</b> propostas.${result.finalizadasAntigas ? ` ${result.finalizadasAntigas} finalizada(s) com notificação antes de ${corteBR} não foram guardadas (o painel guarda as em aberto de qualquer data e as finalizadas dos últimos 3 meses).` : ''}${t6140bByControle ? ` T6140B: ${Object.keys(t6140bByControle).length} propostas.` : ' <b>T6140B não incluído</b> — DATA RECEBIMENTO/DITEC/CADASTRO/BITIX ficam em branco.'}</div>`;
           }
         }
         if (pendNaoReconhecidos.length){
@@ -6953,7 +7046,19 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     ['CARDOSO',   'Estevão Cardoso (Cauda Longa)'],
     ['MARCELO',   'Marcelo Lima (Digital)'],
   ];
-  const SENIOR_EXCLUIDOS = ['CABRAL', 'GALERANI'];
+  // Só o Galerani (Interior) segue excluído por nome; a Cabral virou sênior do Digital em 10/2026, então a
+  // exclusão por nome saiu — quem não está na estrutura atual (Excel) já fica de fora (teamOfNow).
+  const SENIOR_EXCLUIDOS = ['GALERANI'];
+  // A partir de 10/2026 (4º TRI): Marcelo Lima lidera a Cauda Longa e Maria Aparecida (Cabral) o Digital. O rótulo aqui é só\n  // informativo — quem decide a equipe de cada pessoa é a estrutura atual (teamOfNow).
+  const SENIOR_LABELS_NOVO = [
+    ['FOIADELLI', 'Camila Foiadelli (Plataforma)'],
+    ['MARIANO',   'Leonardo Mariano (ABC)'],
+    ['MARCELO',   'Marcelo Lima (Cauda Longa)'],
+    ['CABRAL',    'Maria Aparecida (Digital)'],
+  ];
+  // Tipo do time = texto entre parênteses do rótulo: Marcelo Lima (Cauda Longa) vira Cauda Longa.
+  const tipoTime = l => { const m = /\(([^)]*)\)\s*$/.exec(String(l || '')); return m ? m[1] : ''; };
+  const ORDEM_TIPOS = ['Plataforma', 'ABC', 'Cauda Longa', 'Digital'];
   const NOME_BONITO = {
     'AGATHA SAKAMOTO':'Agatha Sakamoto', 'AGATHA EIKO RODRIGUES SAKAMOTO':'Agatha Sakamoto', 'PATRICIA PESSOA MONKS':'Patricia Monks',
     'JONATHAN LEAL DOS SANTOS SILVA':'Jonathan Leal', 'PABLO SERGIO RIBEIRO AMORA':'Pablo Amora',
@@ -7005,7 +7110,7 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
           team = null;
           if (section !== 'ndi') return;
           if (SENIOR_EXCLUIDOS.some(k => an.indexOf(k) >= 0)) return;
-          const hit = SENIOR_LABELS.find(([k]) => an.indexOf(k) >= 0);
+          const hit = (((year + '-' + mm) >= '2026-10') ? SENIOR_LABELS_NOVO : SENIOR_LABELS).find(([k]) => an.indexOf(k) >= 0);
           if (hit) team = hit[1];
           else {
             team = titulo(a.replace(/^GERENTE SENIOR:?\s*/i, ''));
@@ -7154,7 +7259,18 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
   // hoje, mesmo que na época estivesse em outra; quem não está mais na estrutura atual (ex.: foi
   // pro Interior) não entra em nenhum trimestre. Quando entrar a meta de Outubro, "hoje" passa a
   // ser Outubro automaticamente.
-  const structureNow = () => { const ms = allMonths(); return ms.length ? metaMonth(ms[ms.length - 1]) : null; };
+  // Equipes/pessoas de HOJE = as do mês OFICIAL mais recente (Excel NDI SP, com os sêniores atuais); só se
+  // não houver, cai na estrutura do último mês com meta.
+  const structureNow = () => {
+    const latest = window.getLatestKnownMonth ? window.getLatestKnownMonth() : null;
+    const tm = latest && window.getMetaJunhoTeamsStrict ? window.getMetaJunhoTeamsStrict(latest) : null;
+    if (tm && Object.keys(tm).length){
+      const out = {};
+      Object.entries(tm).forEach(([label, td]) => { out[label] = (td.members || []).map(m => ({ nome:m.nome })); });
+      return out;
+    }
+    const ms = allMonths(); return ms.length ? metaMonth(ms[ms.length - 1]) : null;
+  };
   function teamOfNow(nome){
     const md = structureNow();
     if (!md) return null;
@@ -7251,6 +7367,16 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
   // qs = trimestres selecionados (um ou mais — clicar em outro trimestre soma, clicar de novo tira)
   const state = { mode:'mes', qs:[] };
   const $ = id => document.getElementById(id);
+  // Os campos "Metas por Executivo" e "Integrado de meses passados" carregam direto, sem passar por Processar Arquivos →
+  // Confirmar Atualização — que é o que normalmente revela o botão Publicar. Sem isto o Victor não tinha como publicar (06/10/2026).
+  function mostrarPublicar(){
+    const ps = $('publishStep'); if (!ps) return;
+    ps.style.display = 'block';
+    const isAdmin = window.__userRole__ === 'admin';
+    if ($('publishAdminControls')) $('publishAdminControls').style.display = isAdmin ? 'block' : 'none';
+    if ($('publishNonAdminMsg')) $('publishNonAdminMsg').style.display = isAdmin ? 'none' : 'block';
+    try { ps.scrollIntoView({block:'nearest'}); } catch(e){}
+  }
 
   function renderBar(){
     const el = $('mjPeriodBtns');
@@ -7269,10 +7395,12 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     const { months, teams } = buildQuarter(sel);
     const N = months.length;
     const cur = window.getMjCurrentTeam ? window.getMjCurrentTeam() : 'ALL_TEAMS';
-    const ordem = SENIOR_LABELS.map(x => x[1]).concat(Object.keys(teams).filter(l => !SENIOR_LABELS.some(x => x[1] === l)));
-    let labels = ordem.filter(l => teams[l]);
-    const scoped = cur !== 'ALL_TEAMS' && teams[cur];
-    if (scoped) labels = [cur];
+    const ordIdx = l => { const i = ORDEM_TIPOS.indexOf(tipoTime(l)); return i < 0 ? 99 : i; };
+    let labels = Object.keys(teams).sort((a, b) => ordIdx(a) - ordIdx(b));
+    // Equipe selecionada na tela (pode ser de um mês antigo, com outro sênior): casa pelo TIPO do time.
+    const scopedKey = cur !== 'ALL_TEAMS' ? labels.find(l => teams[l] && tipoTime(l) && tipoTime(l) === tipoTime(cur)) : null;
+    const scoped = !!scopedKey;
+    if (scoped) labels = [scopedKey];
 
     const rowsByTeam = {};
     labels.forEach(l => { rowsByTeam[l] = Object.values(teams[l]).sort((a, b) => aggregate([b], N).metaTot - aggregate([a], N).metaTot); });
@@ -7285,7 +7413,7 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     const per = multi ? 'do Período' : 'do Trimestre';
 
     $('mjTriTitle').textContent = `Meta vs. Integrado por Executivo — ${lab}`;
-    $('mjTriSub').textContent = `${scoped ? cur : 'Todas as equipes (sem Interior)'} · ${nomesMeses} somados · passe o mouse numa linha pra ver por categoria`;
+    $('mjTriSub').textContent = `${scoped ? scopedKey : 'Todas as equipes (sem Interior)'} · ${nomesMeses} somados · passe o mouse numa linha pra ver por categoria`;
     $('mjTriThMeta').textContent = `Meta ${lab}`;
     $('mjTriThInt').textContent = `Integrado ${lab}`;
 
@@ -7329,12 +7457,24 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     const tri = state.mode === 'tri' && state.qs.length > 0;
     if (state.mode === 'tri' && !tri) state.mode = 'mes';
     const keep = [view.children[0], $('mjPeriodBar'), $('mjTriPanel')];
-    [...view.children].forEach(el => { if (keep.indexOf(el) < 0) el.style.display = tri ? 'none' : ''; });
-    const stats = $('mjBannerStats');
-    if (stats) stats.style.display = tri ? 'none' : '';
+    // Só mexe nos painéis da visão mensal quando o trimestre está LIGADO (esconde) ou acabou de ser DESLIGADO
+    // (restaura e pede um re-render, que reaplica o que a tela mensal esconde por conta própria — ex.: o painel de
+    // Corretoras no agregado "Todos os Times"). Antes isto forçava display='' em tudo a cada render e reabria
+    // painéis que o render tinha escondido (06/10/2026: tabela de Corretoras vazia em Todos os Times).
+    if (tri){
+      [...view.children].forEach(el => { if (keep.indexOf(el) < 0) el.style.display = 'none'; });
+      const stats = $('mjBannerStats'); if (stats) stats.style.display = 'none';
+      triHidden = true;
+    } else if (triHidden){
+      triHidden = false;
+      [...view.children].forEach(el => { if (keep.indexOf(el) < 0) el.style.display = ''; });
+      const stats = $('mjBannerStats'); if (stats) stats.style.display = '';
+      if (window.mjRerender) window.mjRerender();
+    }
     $('mjTriPanel').style.display = tri ? '' : 'none';
     if (tri) renderTri();
   }
+  let triHidden = false;
 
   // ---------- meses RECONSTRUÍDOS (Jan–Mai/26) pro seletor "Mês de referência" ----------
   // Sem fechamento oficial do Excel, o mês é montado em memória: estrutura de equipes/cores = a do
@@ -7432,8 +7572,29 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     hit.rank = rows;
     return rows;
   };
+  // Chips dos sêniores no cabeçalho (Sêniores ▾): montados a partir dos times do mês, pra seguir quem é o sênior
+  // de cada equipe (06/10/2026: Cauda Longa -> Marcelo Lima, Digital -> Maria Aparecida).
+  function renderSeniorChips(){
+    const grid = document.querySelector('#dhTeamList .dh-team-grid');
+    if (!grid || !window.getMetaJunhoData) return;
+    const teams = window.getMetaJunhoData().teams || {};
+    const labels = Object.keys(teams).sort((a, b) => { const f = l => { const i = ORDEM_TIPOS.indexOf(tipoTime(l)); return i < 0 ? 99 : i; }; return f(a) - f(b); });
+    if (!labels.length) return;
+    grid.innerHTML = '';
+    labels.forEach(l => {
+      const nome = l.replace(/\s*\([^)]*\)\s*$/, '');
+      const ini = nome.split(/\s+/).map(w => w.charAt(0)).slice(0, 2).join('').toUpperCase();
+      const d = document.createElement('div'); d.className = 'dh-team-member';
+      const av = document.createElement('div'); av.className = 'dh-avatar'; av.textContent = ini;
+      const sp = document.createElement('span'); sp.textContent = nome;
+      d.appendChild(av); d.appendChild(sp);
+      d.addEventListener('click', () => { if (window.jumpToMetaJunho) window.jumpToMetaJunho(l, null); });
+      grid.appendChild(d);
+    });
+  }
   window.__mjAfterRender = function(){
     if (synthCarteira !== (window.CARTEIRA_MAP || null)) synthMonths();   // Carteira mudou (ou acabou de carregar)
+    renderSeniorChips();
     renderBar(); apply();
   };
 
@@ -7475,6 +7636,7 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     }
     if (ok) msgs.push('<div style="color:var(--muted); margin-top:4px;">Clique em Publicar pra salvar pra todo mundo.</div>');
     st.innerHTML = msgs.join('');
+    if (ok) mostrarPublicar();
     synthMonths();
     renderBar(); apply();
   });
@@ -7526,11 +7688,13 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     }
     if (ok) msgs.push('<div style="color:var(--muted); margin-top:4px;">Não altera o mês atual, Elegibilidade nem Ranking. Clique em Publicar pra salvar pra todo mundo.</div>');
     st.innerHTML = msgs.join('');
+    if (ok) mostrarPublicar();
     synthMonths();
     renderBar(); apply();
   });
 
   synthMonths();
+  renderSeniorChips();   // chips do cabeçalho já na 1ª carga (antes só apareciam depois de algum clique/render)
   renderBar();
   apply();
 })();
