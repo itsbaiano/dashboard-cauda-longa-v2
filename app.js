@@ -1634,19 +1634,22 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
   /* ---- Resumo do Dia ---- */
   // Todos os gestores que aparecem nas Pendências PME/PF (não só Cauda Longa) — deriva direto
   // dos dados em vez de lista fixa, então acompanha sozinho se algum gestor entrar/sair.
-  const RESUMO_GESTORES = [...new Set([...Object.keys(PENDENCIAS_PME), ...Object.keys(PENDENCIAS_PF)])].sort();
+  // Montada NA HORA (2026-10-13): antes era uma constante calculada só quando a página abria — depois de importar o
+  // funil, quem não estava nos dados da abertura (ex.: Agatha Amaral, Bianca, Fabio, Carlos Eduardo, VENDA INTERNA)
+  // ficava fora de todo o Resumo do Dia (cartões, "Total pra Atuar" e "Implanta amanhã": 317 × 460 propostas em 13/10).
+  const resumoGestores = () => [...new Set([...Object.keys(PENDENCIAS_PME || {}), ...Object.keys(PENDENCIAS_PF || {})])].sort();
   // Mapa gestor → equipe, mesmo critério já usado em outras partes do painel (Conquista
   // Premiada). Fica duplicado aqui (em vez de compartilhado) porque vive num <script> isolado —
   // mesmo padrão já usado antes nesta base de código pra esse tipo de mapa pequeno e estável.
   const RESUMO_GESTOR_EQUIPE = {
     'Agatha Sakamoto':'CAUDA LONGA', 'Patricia Monks':'CAUDA LONGA', 'Jonathan Leal':'CAUDA LONGA', 'Pablo Amora':'CAUDA LONGA',
-    'Erika de Sousa Silva':'PLATAFORMA SP', 'Camila Alves Pertinhez':'PLATAFORMA SP', 'Lais dos Santos Martins':'PLATAFORMA SP', 'Wilder Coca Patzi':'PLATAFORMA SP',
+    'Erika de Sousa Silva':'PLATAFORMA SP', 'Camila Alves Pertinhez':'PLATAFORMA SP', 'Lais dos Santos Martins':'PLATAFORMA SP', 'Wilder Coca Patzi':'PLATAFORMA SP', 'Agatha Amaral Ribeiro':'PLATAFORMA SP',
     'Karollainny Rangel de Sousa Lopes':'DIGITAL', 'Daniela Novais dos Santos':'DIGITAL', 'Amanda dos Santos Sobral':'DIGITAL', 'Maxuel Pimentel Nobrega':'DIGITAL',
     'Vivian de Cassia Ambrosio':'PLATAFORMA ABC/ALTO TIETÊ/BX', 'Guilherme de Lima Musachi':'PLATAFORMA ABC/ALTO TIETÊ/BX', 'Izabele de Oliveira da Silva':'PLATAFORMA ABC/ALTO TIETÊ/BX',
     'Kaique Araujo da Silva':'INTERIOR SP', 'Daniela Frederico Martins (Campinas)':'INTERIOR SP', 'Daniela Frederico Martins (AM)':'INTERIOR SP', 'Flavia Auana Silva de Oliveira':'INTERIOR SP',
   };
   const resumoEquipeOf = g => RESUMO_GESTOR_EQUIPE[g] || 'Outras equipes';
-  const RESUMO_EQUIPES = [...new Set(RESUMO_GESTORES.map(resumoEquipeOf))].sort();
+  const resumoEquipes = () => [...new Set(resumoGestores().map(resumoEquipeOf))].sort();
   let resumoActiveTab = 'pme';
 
   function initialsOf(nome){
@@ -1659,7 +1662,8 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
     const gestorSel = document.getElementById('resumoGestorSel').value;
     if (gestorSel) return [gestorSel];
     const equipeSel = document.getElementById('resumoEquipeSel').value;
-    return equipeSel ? RESUMO_GESTORES.filter(g => resumoEquipeOf(g) === equipeSel) : RESUMO_GESTORES;
+    const todos = resumoGestores();
+    return equipeSel ? todos.filter(g => resumoEquipeOf(g) === equipeSel) : todos;
   }
 
   // Soma beneficiários por status.planium ('analise'/'pendencia') — mesma lógica binária
@@ -1759,16 +1763,19 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
     const equipeSel = document.getElementById('resumoEquipeSel').value;
     const gestorSelEl = document.getElementById('resumoGestorSel');
     const prevGestor = gestorSelEl.value;
-    const opcoes = equipeSel ? RESUMO_GESTORES.filter(g => resumoEquipeOf(g) === equipeSel) : RESUMO_GESTORES;
+    const todos = resumoGestores();
+    const opcoes = equipeSel ? todos.filter(g => resumoEquipeOf(g) === equipeSel) : todos;
     gestorSelEl.innerHTML = '<option value="">Todos os gestores</option>' + opcoes.map(g=>`<option value="${g}">${g}</option>`).join('');
     gestorSelEl.value = opcoes.includes(prevGestor) ? prevGestor : '';
   }
 
   window.showResumoModal = function(){
     const equipeSelEl = document.getElementById('resumoEquipeSel');
-    if (equipeSelEl.options.length <= 1) {
-      equipeSelEl.innerHTML = '<option value="">Todas as equipes</option>' + RESUMO_EQUIPES.map(eq=>`<option value="${eq}">${eq}</option>`).join('');
-    }
+    // Refeita a cada abertura (equipes podem mudar depois de um import) — mantém a equipe escolhida se ainda existir.
+    const equipeAntes = equipeSelEl.value;
+    const equipesAgora = resumoEquipes();
+    equipeSelEl.innerHTML = '<option value="">Todas as equipes</option>' + equipesAgora.map(eq=>`<option value="${eq}">${eq}</option>`).join('');
+    equipeSelEl.value = equipesAgora.includes(equipeAntes) ? equipeAntes : '';
     resumoAtualizarGestorSel();
     resumoActiveTab = 'pme';
     document.getElementById('resumoTabPme').classList.add('active');
