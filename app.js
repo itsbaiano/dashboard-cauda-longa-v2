@@ -6843,34 +6843,83 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
     const key = String(raw||'').trim().toUpperCase();
     return FULL_19_GESTOR_RAW_MAP[key] || ABREV_GESTOR_MAP[key] || raw;
   };
-  function parsePfPendenciasWorkbook(workbook){
-    const sheet = findSheet(workbook, '2026_ORCAMENTOS') || findSheet(workbook, 'ORCAMENTOS');
+  // Funil PF. Dois formatos (pedido do Victor, 2026-10-13):
+  //  - ANTIGO: planilha montada à mão, aba "2026_ORCAMENTOS" já com a coluna GESTOR (PROCV feito no Excel);
+  //  - CRU: o extrato do sistema "2026_ORCAMENTOS_T221ORCAM.CSV" (";", acentos do Windows), SEM GESTOR. O painel faz o
+  //    PROCV sozinho: código = texto antes do 1º "-" em CONCESSIONÁRIA ("02LW-D P WHITE..." → "02LW") → Carteira →
+  //    GESTOR, com o mesmo motor do extrato do BI (resolveGestorFromCarteira: 06GV→Vivian, 0834→Flavia). Entra quem
+  //    está na lista de gestores do painel (inclui Interior, como no formato antigo); Rio/desligados/VENDA INTERNA ficam
+  //    fora. Código fora da Carteira fica de fora e é listado no resumo (ex.: 435A ANOUK
+  //    CAPITAL, 1.919 orçamentos em 13/10 — Victor: "pode deixar de fora por enquanto").
+  function parsePfPendenciasWorkbook(workbook, carteira){
+    const sheet = findSheet(workbook, '2026_ORCAMENTOS') || findSheet(workbook, 'ORCAMENTOS') || workbook.Sheets[workbook.SheetNames[0]];
     if (!sheet) throw new Error('Não encontrei a aba de orçamentos no arquivo PF.');
     const rows = sheetRows(sheet);
     const header = (rows[0]||[]).map(h => String(h||'').trim().toUpperCase());
     const idx = name => header.indexOf(name);
     const iConc = idx('CONCESSIONÁRIA'), iGestor = idx('GESTOR'), iStatus = idx('STATUS ORÇAMENTO'),
-          iOrcamento = idx('Nº ORÇAMENTO'), iDataStatus = idx('DATA STATUS'), iVidas = idx('QTDE VIDAS');
-    if ([iConc,iGestor,iStatus,iOrcamento].some(i=>i<0)) throw new Error('A aba de orçamentos não tem as colunas esperadas.');
+          iOrcamento = idx('Nº ORÇAMENTO'), iDataStatus = idx('DATA STATUS'), iVidas = idx('QTDE VIDAS'), iControle = idx('Nº CONTROLE');
+    if ([iConc,iStatus,iOrcamento].some(i=>i<0)) throw new Error('O arquivo PF não tem as colunas esperadas (CONCESSIONÁRIA, Nº ORÇAMENTO, STATUS ORÇAMENTO).');
+    const cru = iGestor < 0;
+    if (cru && !(carteira && carteira.byCodigo && Object.keys(carteira.byCodigo).length)){
+      throw new Error('Funil PF: o extrato T221ORCAM não traz o gestor — o painel precisa da Carteira pra achar (código da corretora → GESTOR). Selecione também a Carteira (BANCO DE DADOS - COMERCIAL) nesta importação.');
+    }
+    // Nº ORÇAMENTO no CSV vem como ="4708493" (truque do sistema pro Excel não virar número)
+    const limpaNum = v => String(v == null ? '' : v).trim().replace(/^=?"?/, '').replace(/"$/, '').replace(/\.0$/, '');
 
     const data = {};
+    const info = { cru, linhas: 0, foraEscopo: 0, semCarteira: {}, naoMapeados: {} };
     for (let i = 1; i < rows.length; i++){
       const row = rows[i] || [];
       const status = row[iStatus];
-      if (!status) continue;
-      const gestorRaw = row[iGestor];
-      if (!gestorRaw) continue;
-      const friendly = FULL_19_GESTOR_RAW_MAP[String(gestorRaw).trim().toUpperCase()];
-      if (!friendly) continue;
+      if (!status || !String(status).trim()) continue;
+      info.linhas++;
       const concStr = String(row[iConc]||'');
-      const nomeLimpo = concStr.split('-').slice(1).join('-').trim();
+      const sep = concStr.indexOf('-');
+      const codigo = sep >= 0 ? concStr.slice(0, sep).trim() : '';
+      const nomeLimpo = sep >= 0 ? concStr.slice(sep + 1).trim() : concStr.trim();
+      let friendly;
+      if (!cru){
+        const gestorRaw = row[iGestor];
+        if (!gestorRaw) continue;
+        friendly = FULL_19_GESTOR_RAW_MAP[String(gestorRaw).trim().toUpperCase()];
+        if (!friendly) continue;
+      } else {
+        const r = codigo ? resolveGestorFromCarteira({ c: codigo, n: nomeLimpo }, carteira, 'CAUDA LONGA') : null;
+        if (!r || !r.gestorRaw){
+          // Mesma separação do extrato do BI (attributeCorretorasAgg): código existe mas todos os gestores dele são de
+          // fora do escopo (ex.: 03BL Kaique/Flavia, Interior; 01JI VENDA INTERNA) → fora do escopo; existe com mais de
+          // um gestor possível → ambíguo; não existe → fora da Carteira.
+          const k = (codigo || '?') + ' - ' + nomeLimpo;
+          const cands = codigo ? (carteira.byCodigo[normalizeCodigo(codigo)] || []) : [];
+          // "Fora" = nenhum candidato está na lista do painel (Interior ESTÁ na lista — entra, como no formato antigo)
+          const foraOuVazio = c => { const g = String(c.gestorRaw || '').trim().toUpperCase(); return !g || g === '0' || !(FULL_19_GESTOR_RAW_MAP[g] || ABREV_GESTOR_MAP[g]); };
+          if (cands.length && cands.every(foraOuVazio)) info.foraEscopo++;
+          else if (cands.length){ info.ambiguos = info.ambiguos || {}; info.ambiguos[k] = (info.ambiguos[k]||0) + 1; }
+          else info.semCarteira[k] = (info.semCarteira[k]||0) + 1;
+          continue;
+        }
+        // Mesma regra do formato antigo: entra quem está na lista do painel (inclui Interior); Rio/desligados/VENDA
+        // INTERNA não estão na lista → "fora do escopo"; outros (Bianca, Fabio, Carlos Eduardo...) → listados à parte.
+        const up = r.gestorRaw.trim().toUpperCase();
+        friendly = FULL_19_GESTOR_RAW_MAP[up] || ABREV_GESTOR_MAP[up];
+        if (!friendly){
+          if (isOutOfScopeGestor(up)) info.foraEscopo++;
+          else info.naoMapeados[up] = (info.naoMapeados[up]||0) + 1;
+          continue;
+        }
+      }
+      // Orçamento cancelado antes de ganhar número (Nº ORÇAMENTO vazio — 1.001 linhas em 13/10): identifica pelo
+      // Nº CONTROLE, senão a tela de Pendências juntava todos numa linha só (ela agrupa pelo nº do orçamento).
+      let orc = limpaNum(row[iOrcamento]);
+      if (!orc){ const ctl = iControle >= 0 ? limpaNum(row[iControle]) : ''; orc = 'sem nº' + (ctl ? ' · controle ' + ctl : ' · linha ' + (i + 1)); }
       (data[friendly] = data[friendly] || []).push({
-        orcamento: String(row[iOrcamento]||'').replace(/\.0$/,''), corretora: nomeLimpo,
+        orcamento: orc, corretora: nomeLimpo,
         status: String(status).trim(), dataStatus: excelDateToStr(row[iDataStatus]), vidas: num(row[iVidas]),
       });
     }
     if (Object.keys(data).length === 0) throw new Error('Nenhuma pendência PF reconhecida no arquivo.');
-    return { data };
+    return { data, info };
   }
 
   // "datacriacao" vem como texto "dd/mm/aaaa hh:mm" (não é data real do Excel, é string
@@ -6984,7 +7033,20 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
   function diffPendPf(parsed){
     const totalPend = Object.values(parsed.data).reduce((s,arr)=>s+arr.length,0);
     let html = '<h3 style="font-size:14px;color:var(--navy);margin:14px 0 8px;"><i class=ic-clip></i> Pendências PF — Resumo</h3>';
-    html += `<div style="font-size:12.5px;line-height:1.8;"><div><b>${totalPend}</b> pendências carregadas, em <b>${Object.keys(parsed.data).length}</b> gestores.</div></div>`;
+    html += `<div style="font-size:12.5px;line-height:1.8;"><div><b>${totalPend}</b> pendências carregadas, em <b>${Object.keys(parsed.data).length}</b> gestores.</div>`;
+    const inf = parsed.info;
+    if (inf && inf.cru){
+      // Extrato cru T221ORCAM: mostra o que ficou de fora do PROCV com a Carteira
+      const lista = o => Object.entries(o).sort((a,b)=>b[1]-a[1]);
+      const sc = lista(inf.semCarteira), nm = lista(inf.naoMapeados);
+      const nSc = sc.reduce((s,[,n])=>s+n,0), nNm = nm.reduce((s,[,n])=>s+n,0);
+      html += `<div style="color:var(--muted);">Extrato T221ORCAM: ${inf.linhas} orçamentos lidos; gestor achado pelo código da corretora na Carteira. Fora do escopo (Rio, desligados, VENDA INTERNA): ${inf.foraEscopo}.</div>`;
+      if (nSc) html += `<div style="color:var(--amber);"><i class=ic-warn></i> <b>${nSc}</b> orçamento(s) de ${sc.length} código(s) que não estão na Carteira — ficaram de fora: ${sc.slice(0,6).map(([k,n])=>`${k} (${n})`).join(' · ')}${sc.length>6?' · …':''}</div>`;
+      const am = lista(inf.ambiguos || {}), nAm = am.reduce((s,[,n])=>s+n,0);
+      if (nAm) html += `<div style="color:var(--amber);"><i class=ic-warn></i> <b>${nAm}</b> orçamento(s) de código com mais de um gestor na Carteira — ficaram de fora: ${am.map(([k,n])=>`${k} (${n})`).join(' · ')}</div>`;
+      if (nNm) html += `<div style="color:var(--muted);">Gestores fora da lista do painel (${nNm} orçamentos): ${nm.map(([k,n])=>`${k} (${n})`).join(' · ')}</div>`;
+    }
+    html += '</div>';
     return html;
   }
 
@@ -7260,8 +7322,9 @@ return `<div class="cat-row"><div class="cat-name">${k}</div><div class="bar-bg"
       }
       if (pendPfFile){
         statusEl.innerHTML = '<p style="font-size:12.5px;color:var(--muted);">Lendo Pendências PF...</p>';
-        const wb = await readFileAsWorkbook(pendPfFile);
-        pendingPendPf = parsePfPendenciasWorkbook(wb);
+        // CSV cru (T221ORCAM) ou planilha antiga — readPmeFileAsWorkbook já trata CSV com acento do Windows
+        const wb = await readPmeFileAsWorkbook(pendPfFile);
+        pendingPendPf = parsePfPendenciasWorkbook(wb, pendingCarteira || window.CARTEIRA_MAP || null);
         summaryHtml += diffPendPf(pendingPendPf);
       }
       if (assinaturaFile){
