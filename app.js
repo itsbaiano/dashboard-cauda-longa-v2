@@ -197,6 +197,60 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
   let mjExpandedTeams = new Set(); // times abertos (mostrando gestores) na visão "Todos os Times"
   function destroyMJChart(key){ if(mjCharts[key]){ mjCharts[key].destroy(); delete mjCharts[key]; } }
 
+  // ===== Rodada de design 14/10/2026 (demonstrativo aprovado pelo Victor) — gráficos de barra deitada =====
+  // Barra fina azul + traço marcando a meta (100%) + número escrito na ponta com a cor do status
+  // (verde bateu, laranja de 70% a 99%, vermelho abaixo de 70%). Usado no "% Atingimento por Categoria"
+  // (Visão Geral e Desempenho Comercial) e no "Meta vs. Integrado" (por time e por gestor).
+  const dsEscuro = () => document.documentElement.getAttribute('data-theme') === 'dark';
+  const dsStatus = p => p >= 100 ? '#16B87A' : (p >= 70 ? '#F26B21' : '#F5364A');
+  const dsPct = v => v.toLocaleString('pt-BR', {minimumFractionDigits:1, maximumFractionDigits:1}) + '%';
+  const dsGrade = () => dsEscuro() ? 'rgba(255,255,255,.07)' : 'rgba(139,147,184,.18)';
+  function dsMarca(ctx, x, yTop, yBot){
+    ctx.save(); ctx.strokeStyle = dsEscuro() ? '#C9D2F5' : '#101E63'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(x, yTop); ctx.lineTo(x, yBot); ctx.stroke(); ctx.restore();
+  }
+  function dsRotulo(ctx, txt, cor, x, y){
+    ctx.save(); ctx.fillStyle = cor; ctx.font = '700 11px Inter, "Segoe UI", sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(txt, x, y); ctx.restore();
+  }
+  // pcts: % de atingimento (0–100+) por linha. extra: onClick/onHover do gráfico.
+  window.__dsCatChart = function(canvas, labels, pcts, extra){
+    return new Chart(canvas, {
+      type:'bar',
+      data:{ labels, datasets:[{ label:'% Atingimento', data:pcts, backgroundColor:'#2E52D4', borderRadius:5, barPercentage:.5, categoryPercentage:.9 }] },
+      options:Object.assign({ indexAxis:'y', responsive:true, maintainAspectRatio:false, layout:{padding:{right:56, top:14}},
+        plugins:{legend:{display:false}, tooltip:{callbacks:{label:c=>dsPct(c.raw)}}},
+        scales:{x:{beginAtZero:true, max:Math.ceil(Math.max(110, ...pcts.map(v=>v*1.08))/10)*10, grid:{color:dsGrade()}, ticks:{callback:v=>v+'%', maxTicksLimit:7}}, y:{grid:{display:false}}} }, extra || {}),
+      plugins:[{ id:'dsCat', afterDatasetsDraw(chart){
+        const ctx = chart.ctx, x100 = chart.scales.x.getPixelForValue(100), area = chart.chartArea;
+        ctx.save(); ctx.setLineDash([4,3]); ctx.strokeStyle = dsEscuro() ? 'rgba(201,210,245,.7)' : 'rgba(16,30,99,.55)'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(x100, area.top); ctx.lineTo(x100, area.bottom); ctx.stroke(); ctx.restore();
+        dsRotulo(ctx, 'meta', dsEscuro() ? '#C9D2F5' : '#56608F', x100 - 12, area.top - 7);
+        chart.getDatasetMeta(0).data.forEach((bar, i) => { const v = chart.data.datasets[0].data[i]; dsRotulo(ctx, dsPct(v), dsStatus(v), bar.x + 6, bar.y); });
+      }}]
+    });
+  };
+  // metas/ints por linha; cores = cor da barra de cada linha (ex.: gestor selecionado em laranja).
+  window.__dsMetaChart = function(canvas, labels, metas, ints, cores, extra){
+    const maxV = Math.max(1, ...metas, ...ints) * 1.04;
+    return new Chart(canvas, {
+      type:'bar',
+      data:{ labels, datasets:[{ label:'Integrado', data:ints, backgroundColor:cores, borderRadius:5, barPercentage:.5, categoryPercentage:.9 }] },
+      options:Object.assign({ indexAxis:'y', responsive:true, maintainAspectRatio:false, layout:{padding:{right:58}},
+        plugins:{legend:{display:false}, tooltip:{callbacks:{label:c=>{ const m = metas[c.dataIndex] || 0, v = c.raw || 0;
+          return [`Integrado: ${Math.round(v).toLocaleString('pt-BR')} vidas`, `Meta: ${Math.round(m).toLocaleString('pt-BR')} vidas`, `Atingimento: ${m ? dsPct(v/m*100) : '—'}`]; }}}},
+        scales:{x:{beginAtZero:true, suggestedMax:maxV, grid:{color:dsGrade()}, ticks:{callback:v=>Math.round(v).toLocaleString('pt-BR'), maxTicksLimit:6}}, y:{grid:{display:false}, ticks:{font:{size:11}}}} }, extra || {}),
+      plugins:[{ id:'dsMeta', afterDatasetsDraw(chart){
+        const ctx = chart.ctx, sx = chart.scales.x;
+        chart.getDatasetMeta(0).data.forEach((bar, i) => {
+          const m = metas[i] || 0, v = ints[i] || 0, xm = sx.getPixelForValue(m), h = bar.height || 10;
+          if (m) dsMarca(ctx, xm, bar.y - h/2 - 4, bar.y + h/2 + 4);
+          if (m) dsRotulo(ctx, dsPct(v/m*100), dsStatus(v/m*100), Math.max(bar.x, xm) + 7, bar.y);
+        });
+      }}]
+    });
+  };
+
   function renderCorretoras(gestorNome){
     mjCorretorasGestor = gestorNome;
     const norm = s => String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
@@ -427,14 +481,11 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     }
 
     destroyMJChart('categoria');
-    mjCharts.categoria = new Chart(document.getElementById('mjChartCategoria'), {
-      type:'bar',
-      data:{ labels:catKeys.map(k=>catLabels[k]), datasets:[{ label:'% Atingimento', data:catKeys.map(k=>(total.cat[k].meta?total.cat[k].int/total.cat[k].meta:0)*100), backgroundColor:catKeys.map(k=>{ const p = total.cat[k].meta?total.cat[k].int/total.cat[k].meta:0; return p>=1?'#16B87A':(p>=0.7?'#FFB81C':'#F5364A'); }), borderRadius:6 }] },
-      options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false,
+    mjCharts.categoria = window.__dsCatChart(document.getElementById('mjChartCategoria'),
+      catKeys.map(k=>catLabels[k]), catKeys.map(k=>(total.cat[k].meta?total.cat[k].int/total.cat[k].meta:0)*100), {
         onClick:(evt,els)=>{ if(!els||!els.length) return; const key = catKeys[els[0].index]; if (key === 'ADM') return; const c = total.cat[key]; openMjCatModal(key, c.meta ? c.int/c.meta : 0); },
         onHover:(evt,els)=>{ if(evt&&evt.native&&evt.native.target){ const key = els&&els.length ? catKeys[els[0].index] : null; evt.native.target.style.cursor = (key && key!=='ADM') ? 'pointer' : 'default'; } },
-        plugins:{legend:{display:false}, tooltip:{callbacks:{label:c=>c.raw.toFixed(1)+'%'}}}, scales:{x:{beginAtZero:true, grid:{color:'#eef1f6'}, ticks:{callback:v=>v+'%'}}, y:{grid:{display:false}}} }
-    });
+      });
 
     destroyMJChart('metaGestor');
     document.getElementById('mjCorretorasPanel').style.display = isAllTeamsAggregate ? 'none' : '';
@@ -446,18 +497,12 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
         return {name:t, meta:tt.meta, int:tt.int};
       });
       document.getElementById('mjMetaGestorTitle').textContent = 'Meta vs. Integrado por Time';
-      document.getElementById('mjMetaGestorSub').textContent = 'Clique numa barra para abrir o detalhe daquele time';
-      mjCharts.metaGestor = new Chart(document.getElementById('mjChartMetaGestor'), {
-        type:'bar',
-        data:{ labels:teamRows.map(r=>r.name), datasets:[
-          {label:'Meta', data:teamRows.map(r=>r.meta), backgroundColor:'#cbd5e1', borderRadius:6, barPercentage:.6},
-          {label:'Integrado', data:teamRows.map(r=>r.int), backgroundColor:'#2E52D4', borderRadius:6, barPercentage:.6},
-        ]},
-        options:{ responsive:true, maintainAspectRatio:false,
+      document.getElementById('mjMetaGestorSub').textContent = 'Barra = integrado · traço = meta. Clique numa barra para abrir o detalhe daquele time';
+      mjCharts.metaGestor = window.__dsMetaChart(document.getElementById('mjChartMetaGestor'),
+        teamRows.map(r=>r.name), teamRows.map(r=>r.meta), teamRows.map(r=>r.int), teamRows.map(()=>'#2E52D4'), {
           onClick:(evt,els)=>{ if(!els||!els.length) return; const name = teamRows[els[0].index].name; setTimeout(()=>{ currentTeam = name; renderMetaJunho(); }, 0); },
           onHover:(evt,els)=>{ if(evt&&evt.native&&evt.native.target) evt.native.target.style.cursor=(els&&els.length)?'pointer':'default'; },
-          plugins:{legend:{position:'bottom', labels:{boxWidth:12,font:{size:11}}}}, scales:{y:{beginAtZero:true, grid:{color:'#eef1f6'}}, x:{grid:{display:false}, ticks:{font:{size:10}}}} }
-      });
+        });
 
       document.getElementById('mjGestorGridTitle').textContent = 'Desempenho por Time';
       document.getElementById('mjGestorGridSub').textContent = 'Clique num card pra abrir o detalhe completo do time — ou use o botão pra ver todos os gestores aqui mesmo';
@@ -517,21 +562,15 @@ document.getElementById('globalMonthSelect').addEventListener('change', (e) => {
     document.getElementById('mjTeamsExpand').innerHTML = '';
 
     document.getElementById('mjMetaGestorTitle').textContent = `Meta vs. Integrado por Gestor — ${teamLabel}`;
-    document.getElementById('mjMetaGestorSub').textContent = 'Clique numa barra para ver o detalhe daquele gestor';
+    document.getElementById('mjMetaGestorSub').textContent = 'Barra = integrado · traço = meta. Clique numa barra para ver o detalhe daquele gestor';
     document.getElementById('mjGestorGridTitle').textContent = `Performance Individual por Gestor — ${teamLabel}`;
     document.getElementById('mjGestorGridSub').textContent = 'Quebra por categoria: Individual (IND) · Super Simples (SS) · PME · Administradora (ADM)';
 
-    mjCharts.metaGestor = new Chart(document.getElementById('mjChartMetaGestor'), {
-      type:'bar',
-      data:{ labels:members.map(m=>m.nome), datasets:[
-        {label:'Meta', data:members.map(m=>m.total.meta), backgroundColor:'#cbd5e1', borderRadius:6, barPercentage:.6},
-        {label:'Integrado', data:members.map(m=>m.total.int), backgroundColor:members.map(m=>m.nome===mjSelectedGestor?'#F26B21':'#2E52D4'), borderRadius:6, barPercentage:.6},
-      ]},
-      options:{ responsive:true, maintainAspectRatio:false,
+    mjCharts.metaGestor = window.__dsMetaChart(document.getElementById('mjChartMetaGestor'),
+      members.map(m=>m.nome), members.map(m=>m.total.meta), members.map(m=>m.total.int), members.map(m=>m.nome===mjSelectedGestor?'#F26B21':'#2E52D4'), {
         onClick:(evt, els)=>{ if(!els || !els.length) return; const idx = els[0].index; setTimeout(()=>{ mjSelectedGestor = (mjSelectedGestor===members[idx].nome) ? null : members[idx].nome; renderMetaJunho(); renderCorretoras(members[idx].nome); document.querySelectorAll('#mjCorretorasTabs .subtab-btn').forEach(b=>b.classList.toggle('active', b.dataset.g===members[idx].nome)); }, 0); },
         onHover:(evt,els)=>{ if(evt && evt.native && evt.native.target) evt.native.target.style.cursor = (els && els.length) ? 'pointer' : 'default'; },
-        plugins:{legend:{position:'bottom', labels:{boxWidth:12,font:{size:11}}}}, scales:{y:{beginAtZero:true, grid:{color:'#eef1f6'}}, x:{grid:{display:false}, ticks:{font:{size:10}}}} }
-    });
+      });
 
     document.getElementById('mjGestorGrid').innerHTML = members.map(m => {
       const pTotal = m.total.meta ? m.total.int/m.total.meta : 0;
@@ -4564,34 +4603,44 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
       <div class="kpi"><div class="kpi-icon">${k.icon}</div><div class="label">${k.label}</div><div class="value">${k.value}</div><div class="sub ${k.subClass}">${k.sub}</div></div>
     `).join('');
 
-    // Seta de crescimento — pra Funil e Assinatura, MENOS é melhor (menos gente parada),
-    // por isso a cor é invertida em relação ao sentido comum de "subiu = verde".
-    const cresLabel = (pct) => {
-      if (pct===null) return '<span style="color:var(--muted); font-size:11px;">importe o Crescimento Geral</span>';
-      const cor = pct===0 ? 'var(--muted)' : (pct>0 ? 'var(--accent-red)' : 'var(--accent-mint)');
-      const seta = pct===0 ? '·' : (pct>0 ? '▲' : '▼');
-      return `<span style="color:${cor}; font-weight:700; font-size:11px;">${seta} ${Math.abs(pct)}% vs ontem</span>`;
-    };
+    // Seta de crescimento — pra Funil e Assinatura, MENOS é melhor (menos gente parada), por isso a cor é invertida
+    // em relação ao sentido comum de "subiu = verde" (ver ohLinha abaixo; no Ranking, subir é que é bom).
 
     // Cada número do card leva pra parte específica dele (busca de pendências, lista de
     // assinatura, ou o detalhe/gráficos) — sempre com stopPropagation pra não também disparar
     // o clique geral do card (que abre o detalhe completo, continua funcionando como "ver tudo").
     const go = (fn, gestor) => `event.stopPropagation(); window.${fn}('${gestor.replace(/'/g,"\\'")}')`;
-    document.getElementById('convGrid').innerHTML = rows.map(r => { const g = r.gestor; return `
-      <div class="resumo-card" style="cursor:pointer;" onclick="window.openConversaoDetail('${g.replace(/'/g,"\\'")}')" title="Ver detalhe de ${g}">
-        <div class="rc-head"><div class="rc-avatar">${iniciaisConv(g)}</div><div class="rc-name">${g}</div>
-          ${r.criticos ? `<span onclick="${go('showPendenciasModal',g)}" style="font-size:9px; font-weight:800; padding:3px 8px; border-radius:20px; background:rgba(245,54,74,.12); color:var(--accent-red); white-space:nowrap; cursor:pointer;" title="Ver pendências de ${g}">${r.criticos} crítico${r.criticos>1?'s':''}</span>` : ''}
+    // Card redesenhado (rodada de design 14/10/2026, demonstrativo aprovado): cada número diz o que é — "Propostas
+    // abertas" (quantidade) separado do Funil (vidas) —, ontem → hoje em linhas com a variação em etiqueta, e o ranking
+    // do mês também aparece. Cliques de cada parte continuam levando pro mesmo lugar de antes.
+    const ohLinha = (titulo, unid, ontem, hoje, pct, menosEhMelhor, onclick, dica) => {
+      let chip = '<span class="cvc-delta">—</span>';
+      if (pct !== null){
+        const bom = pct === 0 ? null : (menosEhMelhor ? pct < 0 : pct > 0);
+        chip = `<span class="cvc-delta ${bom===null?'':(bom?'down':'up')}">${pct===0?'·':(pct>0?'▲':'▼')} ${Math.abs(pct)}%</span>`;
+      }
+      return `<div class="cvc-oh-r" onclick="${onclick}" role="button" tabindex="0" title="${dica}"><b>${titulo}<small>${unid}</small></b>
+        <span class="cvc-num">${ontem!==null ? fmt0c(ontem)+' → ' : ''}<strong>${hoje!==null ? fmt0c(hoje) : '—'}</strong></span>${chip}</div>`;
+    };
+    document.getElementById('convGrid').innerHTML = rows.map(r => { const g = r.gestor;
+      const nome = window.getGestorFriendlyName ? window.getGestorFriendlyName(g) : g;
+      const cg = convReport[g] || null;
+      return `
+      <div class="resumo-card cvc" style="cursor:pointer;" onclick="window.openConversaoDetail('${g.replace(/'/g,"\\'")}')" role="button" tabindex="0" title="Ver detalhe de ${g}">
+        <div class="cvc-head"><div class="rc-avatar">${iniciaisConv(nome)}</div><div class="cvc-name">${nome}<small>${GESTOR_EQUIPE[g] || ''}</small></div>
+          ${r.criticos ? `<span class="cvc-crit" onclick="${go('showPendenciasModal',g)}" role="button" tabindex="0" title="Ver pendências de ${g}">${r.criticos} crítico${r.criticos>1?'s':''}</span>` : ''}
         </div>
-        <div class="rc-stats" style="row-gap:10px;">
-          <div onclick="${go('showPendenciasModal',g)}" style="cursor:pointer;" title="Ver pendências de ${g}"><div class="rc-label">SLA médio</div><div class="rc-value" style="font-size:15px; color:${r.atrasoMedio>0?'var(--accent-red)':'var(--accent-mint)'};">${r.atrasoMedio>0 ? '+'+r.atrasoMedio+'d' : 'No prazo'}</div></div>
-          <div onclick="${go('openAssinaturaList',g)}" style="cursor:pointer;" title="Ver lista de assinaturas de ${g}"><div class="rc-label">Aguard. Assinatura</div><div class="rc-value" style="font-size:15px; color:var(--primary-light);">${fmt0c(r.assinTotal)}</div></div>
-          <div onclick="${go('showPendenciasModal',g)}" style="cursor:pointer;" title="Ver pendências de ${g}"><div class="rc-label">Em Funil</div><div class="rc-value" style="font-size:15px; color:var(--accent-gold);">${r.ativasCount}</div></div>
-          <div onclick="${go('openConversaoDetail',g)}" style="cursor:pointer;" title="Ver detalhe de ${g}"><div class="rc-label">% Conversão</div><div class="rc-value" style="font-size:15px; color:${r.conv!==null && r.conv>=70?'var(--accent-mint)':'var(--navy)'};">${r.conv!==null ? r.conv+'%' : '—'}</div></div>
+        <div class="cvc-stats">
+          <div onclick="${go('showPendenciasModal',g)}" role="button" tabindex="0" title="Ver pendências de ${g}"><b>SLA médio</b><span class="${r.atrasoMedio>0?'bad':'ok'}">${r.atrasoMedio>0 ? '+'+r.atrasoMedio+(r.atrasoMedio>1?' dias':' dia') : 'No prazo'}</span></div>
+          <div onclick="${go('openConversaoDetail',g)}" role="button" tabindex="0" title="Ver detalhe de ${g}"><b>Conversão</b><span class="${r.conv!==null && r.conv>=70?'ok':''}">${r.conv!==null ? r.conv+'%' : '—'}</span></div>
+          <div onclick="${go('showPendenciasModal',g)}" role="button" tabindex="0" title="Propostas em análise + pendência (quantidade)"><b>Propostas abertas</b><span>${r.ativasCount}</span></div>
         </div>
-        <div style="display:flex; justify-content:space-between; gap:10px; margin-top:12px; padding-top:10px; border-top:1px solid var(--line);">
-          <div onclick="${go('openConversaoDetail',g)}" style="cursor:pointer;" title="Ver detalhe de ${g}"><div class="rc-label">Funil ontem→hoje</div><div style="font-size:12px; color:var(--navy);">${r.funilOntem!==null ? fmt0c(r.funilOntem)+' → '+fmt0c(r.funilHojeReport) : '—'}</div>${cresLabel(r.cresFunil)}</div>
-          <div onclick="${go('openAssinaturaList',g)}" style="cursor:pointer; text-align:right;" title="Ver lista de assinaturas de ${g}"><div class="rc-label">Assinatura ontem→hoje</div><div style="font-size:12px; color:var(--navy);">${r.assinOntem!==null ? fmt0c(r.assinOntem)+' → '+fmt0c(r.assinHojeReport) : '—'}</div>${cresLabel(r.cresAssin)}</div>
+        <div class="cvc-oh">
+          ${ohLinha('Funil', 'vidas em análise + pendência', r.funilOntem, cg ? r.funilHojeReport : r.ativasVidas, r.cresFunil, true, go('openConversaoDetail',g), 'Ver detalhe de ' + g)}
+          ${ohLinha('Aguardando assinatura', 'vidas', r.assinOntem, cg ? r.assinHojeReport : r.assinTotal, r.cresAssin, true, go('openAssinaturaList',g), 'Ver lista de assinaturas de ' + g)}
+          ${ohLinha('Ranking do mês', 'vidas vendidas', cg ? cg.rankingOntem : null, cg ? cg.rankingHoje : null, cg ? cresce(cg.rankingHoje, cg.rankingOntem) : null, false, go('openConversaoDetail',g), 'Ver detalhe de ' + g)}
         </div>
+        <div class="cvc-foot">${cg ? 'Ontem → hoje da planilha Crescimento Geral · verde = melhorou' : 'Sem ontem → hoje: importe o Crescimento Geral'}</div>
       </div>`; }).join('');
 
     const macroBody = document.getElementById('convMacroBody');
@@ -5148,11 +5197,8 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
     const catKeys = Object.keys(catLabels);
     const scopeCat = scopeTotal.cat || (scopeMembers[0] ? scopeMembers[0].cat : {IND:{meta:0,int:0},SS:{meta:0,int:0},PME:{meta:0,int:0},ADM:{meta:0,int:0}});
     destroyOv('categoria');
-    ovCharts.categoria = new Chart(document.getElementById('ovChartCategoria'), {
-      type:'bar',
-      data:{ labels:catKeys.map(k=>catLabels[k]), datasets:[{ data:catKeys.map(k=>(scopeCat[k].meta?scopeCat[k].int/scopeCat[k].meta:0)*100), backgroundColor:catKeys.map(k=>{ const p = scopeCat[k].meta?scopeCat[k].int/scopeCat[k].meta:0; return p>=1?'#16B87A':(p>=0.7?'#FFB81C':'#F5364A'); }), borderRadius:6 }] },
-      options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}, tooltip:{callbacks:{label:c=>c.raw.toFixed(1)+'%'}}}, scales:{x:{beginAtZero:true, grid:{color:'#eef1f6'}, ticks:{callback:v=>v+'%'}}, y:{grid:{display:false}}} }
-    });
+    ovCharts.categoria = window.__dsCatChart(document.getElementById('ovChartCategoria'),
+      catKeys.map(k=>catLabels[k]), catKeys.map(k=>(scopeCat[k].meta?scopeCat[k].int/scopeCat[k].meta:0)*100));
 
     // Gestor mini-cards (clicáveis — levam pro detalhe daquele gestor na Elegibilidade, se for Cauda Longa)
     // — só faz sentido quando um time específico está selecionado; no agregado (ALL_TEAMS), 19 cards
