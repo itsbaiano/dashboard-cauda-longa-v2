@@ -1403,6 +1403,8 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
       pendExcelJsPromise = new Promise((resolve, reject) => {
         const s = document.createElement('script');
         s.src = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';
+        // Item 8 de segurança (28/10/2026): impressão digital oficial do cdnjs — arquivo adulterado não roda.
+        s.integrity = 'sha512-dlPw+ytv/6JyepmelABrgeYgHI0O+frEwgfnPdXDTOIZz+eDgfW07QXG02/O8COfivBdGNINy+Vex+lYmJ5rxw=='; s.crossOrigin = 'anonymous';
         s.onload = () => window.ExcelJS ? resolve(window.ExcelJS) : reject(new Error('ExcelJS não carregou'));
         s.onerror = () => { pendExcelJsPromise = null; reject(new Error('Falha ao baixar a biblioteca de planilhas')); };
         document.head.appendChild(s);
@@ -1423,6 +1425,7 @@ tfoot td{background:#EEF2FD;font-weight:800;font-size:9px;border-top:2px solid #
       pendJsZipPromise = new Promise((resolve, reject) => {
         const s = document.createElement('script');
         s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+        s.integrity = 'sha512-XMVd28F1oH/O71fzwBnV7HucLxVwtxf26XV8P4wPk26EDxuGZ91N8bsOttmnomcCD3CS5ZMRL50H0GgOHvegtg=='; s.crossOrigin = 'anonymous'; // item 8
         s.onload = () => window.JSZip ? resolve(window.JSZip) : reject(new Error('JSZip não carregou'));
         s.onerror = () => { pendJsZipPromise = null; reject(new Error('Falha ao baixar a biblioteca de compactação')); };
         document.head.appendChild(s);
