@@ -1461,11 +1461,11 @@
   [data-theme="dark"] .gestor-card:hover, [data-theme="dark"] .kpi:hover{box-shadow:0 8px 22px rgba(0,0,0,.35);}
 
   /* Cartões de número: ícone num círculo à esquerda; 1º com faixa azul, último com faixa verde */
-  .kpi{padding:20px 20px 18px 84px; min-height:104px;}
+  .kpi:has(> .kpi-icon){padding:20px 20px 18px 84px; min-height:104px;}  /* só cartão com ícone (os do Ranking não têm) */
   .kpi .kpi-icon{left:20px; right:auto; top:20px; width:48px; height:48px; font-size:20px; opacity:1; background:var(--vn-azul-claro); color:var(--primary-light);}
   .kpi .label{padding-right:0; color:var(--text-secondary);}
   /* 5 cartões ou mais na linha (Desempenho Comercial): ícone em cima, como na imagem de referência — ao lado apertava o número */
-  .kpi-row:has(> .kpi:nth-child(5)) .kpi{padding:68px 18px 16px; min-height:0;}
+  .kpi-row:has(> .kpi:nth-child(5)) .kpi:has(> .kpi-icon){padding:68px 18px 16px; min-height:0;}
   .kpi-row:has(> .kpi:nth-child(5)) .kpi .kpi-icon{left:18px; top:18px; width:42px; height:42px; font-size:18px;}
   .kpi-row .kpi:first-child{border-left:4px solid var(--primary-light);}
   .kpi-row .kpi:last-child:not(:first-child){border-left:4px solid var(--accent-mint);}
@@ -1521,7 +1521,7 @@
     .dh-stat-value{font-size:13px;}
     .dh-footer{margin-top:10px; padding-top:10px;}
     /* cartões de número: ícone em cima (no celular não sobra largura pro ícone ao lado) */
-    .kpi{padding:64px 14px 14px; min-height:0;}
+    .kpi:has(> .kpi-icon){padding:64px 14px 14px; min-height:0;}
     .kpi .kpi-icon{left:14px; top:14px; width:40px; height:40px; font-size:18px;}
   }
 </style>
